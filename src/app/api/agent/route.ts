@@ -1,0 +1,180 @@
+import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth/session";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { transcribe } from "@/lib/agent/whisper";
+import { runAgent, type AgentTurn } from "@/lib/agent/gemini";
+import {
+  geminiFunctionDeclarations,
+  getTool,
+  type ToolCtx,
+} from "@/lib/agent/tools";
+import { businessDate } from "@/lib/shifts";
+import type { SessionClaims } from "@/lib/auth/jwt";
+
+export const runtime = "nodejs";
+
+function buildSystem(
+  session: SessionClaims,
+  menu: string,
+  productos: string,
+  catalog: string,
+  insumos: string,
+): string {
+  return [
+    "Eres el asistente de 'Controla', una app de control de un restaurante pequeño en Ecuador.",
+    `Usuaria: ${session.user_name} (${session.user_role}).`,
+    "Tu trabajo: convertir lo que dice la usuaria en una acción usando las herramientas disponibles.",
+    "Reglas:",
+    "- Responde SIEMPRE en español de Ecuador, breve y claro.",
+    "- Usa una herramienta cuando la intención sea clara. Si falta un dato esencial, pregúntalo en una frase.",
+    "- VENDER: usa el precio del MENÚ DE HOY. Si el plato no está en el menú ni en el catálogo, pregunta si se agrega y a qué precio. SIEMPRE confirma el precio, aunque ya esté en el catálogo.",
+    "- Las colas/bebidas y demás PRODUCTOS del inventario se venden directo y descuentan stock.",
+    "- 'Para llevar': se consume un envase (lonchera, bandeja, vaso). Si no está claro cuál, pregúntalo.",
+    "- GASTO (servilletas, escoba, gas, servicios) NO es inventario → usa registrar_gasto. COMPRA de algo que ENTRA al inventario (arroz, aceite, colas) → usa registrar_compra.",
+    "- En gastos y compras, pregunta si el dinero salió de la CAJA o lo puso la JEFA (fuente_pago).",
+    "- Producción: si dicen cuántas unidades salieron (presas, bolsitas) es contable; si no (arroz, sopa), es a granel.",
+    "- Para retiros de caja o de inventario, el motivo es obligatorio.",
+    "- La app pedirá confirmación antes de guardar; tú solo decide la acción.",
+    "",
+    "MENÚ DE HOY (este turno) — usa estos precios al vender:",
+    menu,
+    "",
+    "Productos del inventario a la venta (nombre: precio):",
+    productos,
+    "",
+    "Catálogo de platos (para fijar el menú o definir recetas):",
+    catalog,
+    "",
+    "Insumos conocidos:",
+    insumos,
+  ].join("\n");
+}
+
+export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+  const db = createAdminClient();
+  const ctx: ToolCtx = { db, session };
+
+  let userText = "";
+  let history: AgentTurn[] = [];
+
+  const ctype = req.headers.get("content-type") ?? "";
+  try {
+    if (ctype.includes("multipart/form-data")) {
+      const form = await req.formData();
+      const audio = form.get("audio");
+      const histRaw = form.get("history");
+      if (typeof histRaw === "string") history = JSON.parse(histRaw);
+      if (audio instanceof Blob) userText = await transcribe(audio, "audio.webm");
+    } else {
+      const json = (await req.json()) as { text?: string; history?: AgentTurn[] };
+      userText = String(json.text ?? "");
+      history = json.history ?? [];
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Error leyendo la petición";
+    return NextResponse.json({ transcript: "", reply: `⚠️ ${msg}`, action: null });
+  }
+
+  if (!userText.trim()) {
+    return NextResponse.json({ error: "Sin contenido" }, { status: 400 });
+  }
+
+  const today = businessDate();
+  const [{ data: menuRows }, { data: dishes }, { data: ings }] = await Promise.all([
+    db
+      .from("daily_menu")
+      .select("price,available,dishes(name)")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("business_date", today)
+      .eq("shift_id", session.shift_id)
+      .order("sort_order"),
+    db
+      .from("dishes")
+      .select("name,price")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("active", true),
+    db
+      .from("ingredients")
+      .select("name,kind,consumption_unit,is_sellable,sale_price")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("active", true),
+  ]);
+
+  const menu =
+    (menuRows ?? [])
+      .filter((m) => m.available)
+      .map((m) => {
+        const d = m.dishes as unknown as { name: string } | null;
+        return `- ${d?.name ?? "?"}: $${Number(m.price).toFixed(2)}`;
+      })
+      .join("\n") || "(sin menú fijado para este turno)";
+  const productos =
+    (ings ?? [])
+      .filter((i) => i.is_sellable)
+      .map((i) => `- ${i.name}: $${Number(i.sale_price ?? 0).toFixed(2)}`)
+      .join("\n") || "(sin productos a la venta)";
+  const catalog =
+    (dishes ?? []).map((d) => `- ${d.name}: $${d.price}`).join("\n") ||
+    "(sin platos aún)";
+  const insumos =
+    (ings ?? [])
+      .filter((i) => !i.is_sellable)
+      .map(
+        (i) =>
+          `- ${i.name} (${i.kind}${i.consumption_unit ? `, en ${i.consumption_unit}` : ""})`,
+      )
+      .join("\n") || "(sin insumos aún)";
+
+  const turns: AgentTurn[] = [...history, { role: "user", text: userText }];
+
+  let decision;
+  try {
+    decision = await runAgent({
+      systemInstruction: buildSystem(session, menu, productos, catalog, insumos),
+      history: turns,
+      functionDeclarations: geminiFunctionDeclarations,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Error del agente";
+    return NextResponse.json({ transcript: userText, reply: `⚠️ ${msg}`, action: null });
+  }
+
+  if (decision.functionCall) {
+    const tool = getTool(decision.functionCall.name);
+    if (!tool) {
+      return NextResponse.json({
+        transcript: userText,
+        reply: "No reconocí esa acción.",
+        action: null,
+      });
+    }
+    try {
+      const args = tool.validate(decision.functionCall.args);
+      if (tool.mode === "read") {
+        const r = await tool.execute(args, ctx);
+        return NextResponse.json({ transcript: userText, reply: r.message, action: null });
+      }
+      const preview = tool.preview
+        ? await tool.preview(args, ctx)
+        : "¿Confirmo esta acción?";
+      return NextResponse.json({
+        transcript: userText,
+        reply: preview,
+        action: { tool: tool.name, args },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "No pude preparar la acción";
+      return NextResponse.json({ transcript: userText, reply: `⚠️ ${msg}`, action: null });
+    }
+  }
+
+  return NextResponse.json({
+    transcript: userText,
+    reply: decision.text,
+    action: null,
+  });
+}

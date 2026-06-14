@@ -1,0 +1,756 @@
+import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
+import { eachDate, parseLocal } from "@/lib/range";
+
+type Db = SupabaseClient<Database>;
+
+const WEEKDAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+// ===========================================================================
+//  REPORTE DEL DÍA (un solo día)
+// ===========================================================================
+export interface DishLine {
+  dishId: string | null;
+  name: string;
+  qty: number;
+  revenue: number;
+  unitCost: number | null;
+  cost: number | null;
+  margin: number | null;
+}
+export interface DayReport {
+  date: string;
+  ventas: number;
+  costoDia: number;
+  margenDia: number;
+  mermaGranel: number;
+  closed: boolean;
+  dishes: DishLine[];
+}
+
+export async function computeDayReport(
+  db: Db,
+  restaurantId: string,
+  date: string,
+): Promise<DayReport> {
+  const [{ data: sales }, { data: batches }, { data: gclose }, { data: dc }] =
+    await Promise.all([
+      db.from("sales").select("dish_id,dish_name,qty,total")
+        .eq("restaurant_id", restaurantId).eq("business_date", date),
+      db.from("production_batches").select("total_cost")
+        .eq("restaurant_id", restaurantId).eq("business_date", date),
+      db.from("granel_close").select("ingredient_id,cost_per_plate,merma_cost")
+        .eq("restaurant_id", restaurantId).eq("business_date", date),
+      db.from("daily_close").select("status")
+        .eq("restaurant_id", restaurantId).eq("business_date", date).maybeSingle(),
+    ]);
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  const costoDia = (batches ?? []).reduce((s, b) => s + Number(b.total_cost), 0);
+
+  const granelCost = new Map<string, number>();
+  let mermaGranel = 0;
+  for (const g of gclose ?? []) {
+    if (g.cost_per_plate != null) granelCost.set(g.ingredient_id, Number(g.cost_per_plate));
+    mermaGranel += Number(g.merma_cost ?? 0);
+  }
+  const closed = dc?.status === "closed";
+
+  const dishIds = [...new Set((sales ?? []).map((s) => s.dish_id).filter(Boolean))] as string[];
+  const compsByDish = new Map<string, { ingredient_id: string; qty: number; kind: string; unitCost: number }[]>();
+  if (dishIds.length) {
+    const { data: comps } = await db.from("dish_components")
+      .select("dish_id, qty, ingredients(id,kind,last_unit_cost)").in("dish_id", dishIds);
+    for (const c of comps ?? []) {
+      const ing = c.ingredients as unknown as { id: string; kind: string; last_unit_cost: number | null } | null;
+      if (!ing) continue;
+      const arr = compsByDish.get(c.dish_id) ?? [];
+      arr.push({ ingredient_id: ing.id, qty: Number(c.qty), kind: ing.kind, unitCost: Number(ing.last_unit_cost ?? 0) });
+      compsByDish.set(c.dish_id, arr);
+    }
+  }
+
+  const byDish = new Map<string, { name: string; dishId: string | null; qty: number; revenue: number }>();
+  for (const s of sales ?? []) {
+    const key = s.dish_id ?? s.dish_name ?? "?";
+    const e = byDish.get(key) ?? { name: s.dish_name ?? "?", dishId: s.dish_id, qty: 0, revenue: 0 };
+    e.qty += Number(s.qty);
+    e.revenue += Number(s.total);
+    byDish.set(key, e);
+  }
+
+  const dishes: DishLine[] = [];
+  for (const e of byDish.values()) {
+    const comps = e.dishId ? compsByDish.get(e.dishId) : undefined;
+    let unitCost = 0;
+    let costKnown = !!comps;
+    for (const c of comps ?? []) {
+      if (c.kind === "contable") unitCost += c.qty * c.unitCost;
+      else {
+        const cpp = granelCost.get(c.ingredient_id);
+        if (cpp == null) costKnown = false;
+        else unitCost += cpp;
+      }
+    }
+    const cost = costKnown ? unitCost * e.qty : null;
+    dishes.push({
+      dishId: e.dishId,
+      name: e.name,
+      qty: e.qty,
+      revenue: e.revenue,
+      unitCost: comps ? unitCost : null,
+      cost,
+      margin: cost != null ? e.revenue - cost : null,
+    });
+  }
+  dishes.sort((a, b) => b.qty - a.qty);
+
+  return { date, ventas, costoDia, margenDia: ventas - costoDia, mermaGranel, closed, dishes };
+}
+
+// ===========================================================================
+//  RESUMEN FINANCIERO DE UN DÍA (lo que gana ese día, con TODO incluido)
+// ===========================================================================
+export interface CajaTurno {
+  shift: string;
+  apertura: number;
+  esperada: number;
+  contada: number | null;
+  descuadre: number | null;
+  cerrado: boolean;
+}
+export interface DaySummary {
+  date: string;
+  closed: boolean;
+  ventas: number;
+  insumos: { total: number; items: { name: string; cost: number; granel: boolean }[] };
+  productos: { total: number; items: { name: string; cost: number }[] };
+  gastos: { total: number; items: { name: string; cost: number }[] };
+  fijos: { operativo: number; administrativo: number; financiero: number; total: number };
+  caja: {
+    apertura: number;
+    ventasEfectivo: number;
+    aportes: number;
+    egresos: number; // retiros + gastos de caja + compras de caja
+    esperada: number;
+    contada: number | null; // null si ningún turno cerrado
+    descuadre: number | null;
+    turnos: CajaTurno[];
+  };
+  merma: number | null; // null = pendiente de cierre
+  utilidad: number;
+}
+
+export async function computeDaySummary(
+  db: Db,
+  restaurantId: string,
+  date: string,
+): Promise<DaySummary> {
+  const [
+    { data: sales },
+    { data: batches },
+    { data: moves },
+    { data: gclose },
+    { data: dc },
+    { data: recurring },
+    { data: expenses },
+    { data: sessions },
+    { data: shifts },
+  ] = await Promise.all([
+    db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("production_batches").select("total_cost, ingredients(name,kind)")
+      .eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("inventory_movements").select("qty,unit_cost,type, ingredients(name,costing_method)")
+      .eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("granel_close").select("merma_cost").eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("daily_close").select("status").eq("restaurant_id", restaurantId).eq("business_date", date).maybeSingle(),
+    db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active")
+      .eq("restaurant_id", restaurantId).eq("active", true),
+    db.from("expenses").select("amount,category,note,paid_from_cash")
+      .eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("shift_sessions").select("id,shift_id,status,opening_cash,expected_cash,counted_cash,cash_discrepancy")
+      .eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("shifts").select("id,name,sort_order").eq("restaurant_id", restaurantId).order("sort_order"),
+  ]);
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+
+  // Insumos cocinados (el "pool del día": granel + tandas contables)
+  const insumoMap = new Map<string, { cost: number; granel: boolean }>();
+  for (const b of batches ?? []) {
+    const ing = b.ingredients as unknown as { name: string; kind: string } | null;
+    const name = ing?.name ?? "—";
+    const e = insumoMap.get(name) ?? { cost: 0, granel: ing?.kind === "granel" };
+    e.cost += Number(b.total_cost);
+    insumoMap.set(name, e);
+  }
+  const insumoItems = [...insumoMap.entries()]
+    .map(([name, v]) => ({ name, cost: v.cost, granel: v.granel }))
+    .sort((a, b) => b.cost - a.cost);
+  const insumosTotal = insumoItems.reduce((s, i) => s + i.cost, 0);
+
+  // Productos vendidos (desechables/reventa: bandejas, colas, verde…). Excluye
+  // lo producido en tandas para no duplicar.
+  const prodMap = new Map<string, number>();
+  let mermaContable = 0;
+  for (const m of moves ?? []) {
+    const ing = m.ingredients as unknown as { name: string; costing_method: string } | null;
+    const cost = Math.abs(Number(m.qty)) * Number(m.unit_cost);
+    if (m.type === "merma") mermaContable += cost;
+    if (m.type !== "venta") continue;
+    if (!ing || ing.costing_method === "tanda") continue; // ya contado en insumos
+    prodMap.set(ing.name, (prodMap.get(ing.name) ?? 0) + cost);
+  }
+  const prodItems = [...prodMap.entries()]
+    .map(([name, cost]) => ({ name, cost }))
+    .sort((a, b) => b.cost - a.cost);
+  const productosTotal = prodItems.reduce((s, i) => s + i.cost, 0);
+
+  // Costos fijos prorrateados a ESTE día
+  const d = parseLocal(date);
+  const wd = d.getDay();
+  const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const fijos = { operativo: 0, administrativo: 0, financiero: 0 };
+  for (const c of recurring ?? []) {
+    const amount = Number(c.amount);
+    let monto = 0;
+    if (c.schedule_type === "daily") monto = amount;
+    else if (c.schedule_type === "weekly") {
+      const wds = (c.weekdays as number[] | null) ?? [];
+      monto = wds.length ? (wds.includes(wd) ? amount : 0) : amount / 7;
+    } else monto = amount / dim;
+    if (c.category === "administrativo") fijos.administrativo += monto;
+    else if (c.category === "financiero") fijos.financiero += monto;
+    else fijos.operativo += monto;
+  }
+  const fijosTotal = fijos.operativo + fijos.administrativo + fijos.financiero;
+
+  const closed = dc?.status === "closed";
+  const mermaGranel = (gclose ?? []).reduce((s, g) => s + Number(g.merma_cost ?? 0), 0);
+  const merma = closed ? mermaGranel + mermaContable : null;
+
+  // Gastos del día (consumibles/servicios; ya NO incluye compras de inventario)
+  const gastoMap = new Map<string, number>();
+  let gastosCajaTotal = 0;
+  for (const e of expenses ?? []) {
+    const key = e.note?.trim() || e.category || "Gasto";
+    gastoMap.set(key, (gastoMap.get(key) ?? 0) + Number(e.amount));
+    if (e.paid_from_cash) gastosCajaTotal += Number(e.amount);
+  }
+  const gastoItems = [...gastoMap.entries()]
+    .map(([name, cost]) => ({ name, cost }))
+    .sort((a, b) => b.cost - a.cost);
+  const gastosTotal = gastoItems.reduce((s, i) => s + i.cost, 0);
+
+  // Caja del día: apertura + ventas efectivo + aportes − egresos (retiros + gastos + compras)
+  const sessionIds = (sessions ?? []).map((s) => s.id);
+  const [{ data: cashMoves }, { data: cajaLive }] = await Promise.all([
+    db.from("cash_movements").select("shift_session_id,type,amount").in("shift_session_id", sessionIds),
+    db.from("v_caja_turno").select("shift_session_id,caja_esperada").in("shift_session_id", sessionIds),
+  ]);
+  const ventasEfectivo = (sales ?? [])
+    .filter((s) => s.payment_method === "efectivo")
+    .reduce((s, v) => s + Number(v.total), 0);
+  const aportes = (cashMoves ?? []).filter((m) => m.type === "ingreso").reduce((s, m) => s + Number(m.amount), 0);
+  const egresosCash = (cashMoves ?? []).filter((m) => m.type === "egreso").reduce((s, m) => s + Number(m.amount), 0);
+  const egresos = egresosCash + gastosCajaTotal;
+  const aperturaTotal = (sessions ?? []).reduce((s, x) => s + Number(x.opening_cash), 0);
+
+  const liveBySession = new Map((cajaLive ?? []).map((c) => [c.shift_session_id, Number(c.caja_esperada)]));
+  const shiftNameById = new Map((shifts ?? []).map((s) => [s.id, s.name]));
+  const turnos: CajaTurno[] = (sessions ?? []).map((s) => {
+    const cerrado = s.status === "closed";
+    const esperada = cerrado
+      ? Number(s.expected_cash ?? 0)
+      : liveBySession.get(s.id) ?? Number(s.opening_cash);
+    return {
+      shift: shiftNameById.get(s.shift_id) ?? "Turno",
+      apertura: Number(s.opening_cash),
+      esperada,
+      contada: cerrado ? Number(s.counted_cash ?? 0) : null,
+      descuadre: cerrado ? Number(s.cash_discrepancy ?? 0) : null,
+      cerrado,
+    };
+  });
+  const esperadaTotal = aperturaTotal + ventasEfectivo + aportes - egresos;
+  const anyCerrado = turnos.some((t) => t.cerrado);
+  const contadaTotal = anyCerrado ? turnos.reduce((s, t) => s + (t.contada ?? 0), 0) : null;
+  const descuadreTotal = anyCerrado ? turnos.reduce((s, t) => s + (t.descuadre ?? 0), 0) : null;
+
+  const utilidad = ventas - insumosTotal - productosTotal - gastosTotal - fijosTotal;
+
+  return {
+    date,
+    closed,
+    ventas,
+    insumos: { total: insumosTotal, items: insumoItems },
+    productos: { total: productosTotal, items: prodItems },
+    gastos: { total: gastosTotal, items: gastoItems },
+    fijos: { ...fijos, total: fijosTotal },
+    caja: {
+      apertura: aperturaTotal,
+      ventasEfectivo,
+      aportes,
+      egresos,
+      esperada: esperadaTotal,
+      contada: contadaTotal,
+      descuadre: descuadreTotal,
+      turnos,
+    },
+    merma,
+    utilidad,
+  };
+}
+
+// ===========================================================================
+//  ANALÍTICA (rango from..to) — anti-robo + rankings
+// ===========================================================================
+export interface Analytics {
+  // salud financiera
+  ventas: number;
+  costoDirecto: number;
+  margenContribucion: number;
+  fijos: number;
+  gastos: number; // gastos operativos no-inventario (servilletas, escoba, propinas…)
+  gastosItems: { name: string; cost: number }[];
+  gastosPorResponsable: { responsable: string; total: number; n: number }[];
+  utilidadNeta: number;
+  margenPct: number;
+  mermaTotal: number;
+  desfaseTotal: number; // neto (negativo = perdido)
+  perdidaTotal: number; // mermas + pérdidas por desfase
+  indiceContraccion: number; // % merma / pool
+  // mapa de calor día x turno
+  shiftCols: { id: string; name: string }[];
+  heatmap: {
+    weekday: number;
+    label: string;
+    cells: { shiftId: string; ventas: number; costo: number; efic: number | null }[];
+  }[];
+  // tendencia diaria: ventas vs costos totales (gap = utilidad del día)
+  serieDiaria: { date: string; ventas: number; costos: number; utilidad: number }[];
+  ventasPrev: number; // ventas del periodo inmediatamente anterior (igual longitud)
+  ventasDeltaPct: number | null;
+  // ingeniería de menú (normalizada por día servido)
+  platos: { name: string; ventas: number; costo: number; dias: number; gananciaPorDia: number; margenPct: number }[];
+  // merma histórica
+  mermaPorDia: { date: string; merma: number }[];
+  mermaInsight: string | null;
+  // desfases (anti-robo)
+  desfasePorDia: { date: string; cash: number; inventario: number; total: number }[];
+  desfasePorResponsable: { responsable: string; total: number; n: number }[];
+}
+
+function fdate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function shiftYmd(s: string, delta: number): string {
+  const d = parseLocal(s);
+  d.setDate(d.getDate() + delta);
+  return fdate(d);
+}
+
+export async function computeAnalytics(
+  db: Db,
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<Analytics> {
+  const len = eachDate(from, to).length || 1;
+  const prevTo = shiftYmd(from, -1);
+  const prevFrom = shiftYmd(from, -len);
+
+  const [
+    { data: sales },
+    { data: sessions },
+    { data: shifts },
+    { data: users },
+    { data: ddc },
+    { data: dishes },
+    { data: recurring },
+    { data: batches },
+    { data: moves },
+    { data: gclose },
+    { data: expensesRows },
+    { data: prevSales },
+  ] = await Promise.all([
+    db.from("sales").select("total,business_date,shift_session_id")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("shift_sessions").select("id,business_date,shift_id,responsible_user_id,status,cash_discrepancy")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("shifts").select("id,name,sort_order").eq("restaurant_id", restaurantId).eq("active", true).order("sort_order"),
+    db.from("users").select("id,name").eq("restaurant_id", restaurantId),
+    db.from("dish_daily_cost").select("dish_id,business_date,unit_cost,price,qty")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("dishes").select("id,name").eq("restaurant_id", restaurantId),
+    db.from("recurring_costs").select("amount,category,schedule_type,weekdays,shift_id,active")
+      .eq("restaurant_id", restaurantId).eq("active", true),
+    db.from("production_batches").select("total_cost,business_date")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("inventory_movements").select("type,qty,unit_cost,total_cost,business_date,user_id, ingredients(costing_method)")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("granel_close").select("business_date,merma_cost,pool_cost")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("expenses").select("amount,category,note,user_id,business_date")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("sales").select("total")
+      .eq("restaurant_id", restaurantId).gte("business_date", prevFrom).lte("business_date", prevTo),
+  ]);
+
+  const dates = eachDate(from, to);
+  const occByWd = [0, 0, 0, 0, 0, 0, 0];
+  for (const d of dates) occByWd[d.getDay()]++;
+
+  const userName = new Map((users ?? []).map((u) => [u.id, u.name]));
+  const dishName = new Map((dishes ?? []).map((d) => [d.id, d.name]));
+  const sessionShift = new Map((sessions ?? []).map((s) => [s.id, s.shift_id]));
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+
+  // costo directo = producción + productos vendidos (no-tanda)
+  let costoDirecto = (batches ?? []).reduce((s, b) => s + Number(b.total_cost), 0);
+  let mermaInv = 0;
+  for (const m of moves ?? []) {
+    const ing = m.ingredients as unknown as { costing_method: string } | null;
+    const cost = Math.abs(Number(m.qty)) * Number(m.unit_cost);
+    if (m.type === "merma") mermaInv += cost;
+    if (m.type === "venta" && ing && ing.costing_method !== "tanda") costoDirecto += cost;
+  }
+  const margenContribucion = ventas - costoDirecto;
+
+  // fijos prorrateados al rango
+  let fijos = 0;
+  for (const c of recurring ?? []) {
+    const amount = Number(c.amount);
+    if (c.schedule_type === "daily") fijos += amount * dates.length;
+    else if (c.schedule_type === "weekly") {
+      const wd = (c.weekdays as number[] | null) ?? [];
+      fijos += wd.length ? amount * dates.filter((d) => wd.includes(d.getDay())).length : amount * (dates.length / 7);
+    } else fijos += amount * (dates.length / 30);
+  }
+  // gastos operativos no-inventario (servilletas, escoba, propinas, desinfectante…)
+  const gastoConcepto = new Map<string, number>();
+  const gastoResp = new Map<string, { total: number; n: number }>();
+  for (const e of expensesRows ?? []) {
+    const concept = e.note?.trim() || e.category || "Gasto";
+    gastoConcepto.set(concept, (gastoConcepto.get(concept) ?? 0) + Number(e.amount));
+    const name = e.user_id ? userName.get(e.user_id) ?? "—" : "—";
+    const r = gastoResp.get(name) ?? { total: 0, n: 0 };
+    r.total += Number(e.amount);
+    r.n += 1;
+    gastoResp.set(name, r);
+  }
+  const gastosItems = [...gastoConcepto.entries()]
+    .map(([name, cost]) => ({ name, cost }))
+    .sort((a, b) => b.cost - a.cost);
+  const gastos = gastosItems.reduce((s, i) => s + i.cost, 0);
+  const gastosPorResponsable = [...gastoResp.entries()]
+    .map(([responsable, v]) => ({ responsable, ...v }))
+    .sort((a, b) => b.total - a.total);
+
+  const utilidadNeta = margenContribucion - fijos - gastos;
+  const margenPct = ventas > 0 ? (margenContribucion / ventas) * 100 : 0;
+
+  // merma (granel + inventario)
+  const mermaByDate = new Map<string, number>();
+  let poolTotal = 0;
+  for (const g of gclose ?? []) {
+    mermaByDate.set(g.business_date, (mermaByDate.get(g.business_date) ?? 0) + Number(g.merma_cost ?? 0));
+    poolTotal += Number(g.pool_cost ?? 0);
+  }
+  for (const m of moves ?? []) {
+    if (m.type !== "merma") continue;
+    const v = Math.abs(Number(m.qty)) * Number(m.unit_cost);
+    mermaByDate.set(m.business_date, (mermaByDate.get(m.business_date) ?? 0) + v);
+  }
+  const mermaPorDia = dates.map((d) => ({ date: fdate(d), merma: mermaByDate.get(fdate(d)) ?? 0 }));
+  const mermaTotal = mermaPorDia.reduce((s, m) => s + m.merma, 0);
+  const indiceContraccion = poolTotal > 0 ? (mermaTotal / poolTotal) * 100 : 0;
+
+  // insight de merma: día de la semana con más desperdicio promedio
+  const mermaWd = [0, 0, 0, 0, 0, 0, 0];
+  for (const m of mermaPorDia) mermaWd[parseLocal(m.date).getDay()] += m.merma;
+  let mermaInsight: string | null = null;
+  if (mermaTotal > 0) {
+    let best = 0;
+    for (let i = 1; i < 7; i++) {
+      if ((mermaWd[i] / (occByWd[i] || 1)) > (mermaWd[best] / (occByWd[best] || 1))) best = i;
+    }
+    if (mermaWd[best] > 0) mermaInsight = `Los ${WEEKDAYS[best]} es cuando más se desperdicia. Reduce el pool inicial ese día.`;
+  }
+
+  // desfases: caja (cierre) + inventario (ajuste)
+  const cashByDate = new Map<string, number>();
+  const invByDate = new Map<string, number>();
+  const respMap = new Map<string, { total: number; n: number }>();
+  for (const s of sessions ?? []) {
+    if (s.status !== "closed" || s.cash_discrepancy == null) continue;
+    const v = Number(s.cash_discrepancy);
+    if (v === 0) continue;
+    cashByDate.set(s.business_date, (cashByDate.get(s.business_date) ?? 0) + v);
+    const name = s.responsible_user_id ? (userName.get(s.responsible_user_id) ?? "—") : "—";
+    const e = respMap.get(name) ?? { total: 0, n: 0 };
+    e.total += v;
+    e.n += 1;
+    respMap.set(name, e);
+  }
+  for (const m of moves ?? []) {
+    if (m.type !== "ajuste") continue;
+    const v = Number(m.total_cost ?? 0);
+    if (v === 0) continue;
+    invByDate.set(m.business_date, (invByDate.get(m.business_date) ?? 0) + v);
+    const name = m.user_id ? (userName.get(m.user_id) ?? "—") : "—";
+    const e = respMap.get(name) ?? { total: 0, n: 0 };
+    e.total += v;
+    e.n += 1;
+    respMap.set(name, e);
+  }
+  const desfasePorDia = dates.map((d) => {
+    const k = fdate(d);
+    const cash = cashByDate.get(k) ?? 0;
+    const inventario = invByDate.get(k) ?? 0;
+    return { date: k, cash, inventario, total: cash + inventario };
+  });
+  const desfaseTotal = desfasePorDia.reduce((s, x) => s + x.total, 0);
+  const desfasePorResponsable = [...respMap.entries()]
+    .map(([responsable, v]) => ({ responsable, ...v }))
+    .sort((a, b) => a.total - b.total);
+  const perdidaTotal = mermaTotal + (desfaseTotal < 0 ? -desfaseTotal : 0);
+
+  // mapa de calor día x turno (eficiencia = ventas / costo personal)
+  const ventasGrid = new Map<string, number>();
+  for (const s of sales ?? []) {
+    const shiftId = sessionShift.get(s.shift_session_id);
+    if (!shiftId) continue;
+    const w = parseLocal(s.business_date).getDay();
+    const k = `${w}|${shiftId}`;
+    ventasGrid.set(k, (ventasGrid.get(k) ?? 0) + Number(s.total));
+  }
+  // sueldo por día para cada (turno, día de semana)
+  const sueldoDia = new Map<string, number>(); // `${shift}|${w}`
+  for (const c of recurring ?? []) {
+    if (c.category !== "operativo" || !c.shift_id) continue;
+    const amount = Number(c.amount);
+    const wds = (c.weekdays as number[] | null) ?? [];
+    for (let w = 0; w < 7; w++) {
+      let perDay = 0;
+      if (c.schedule_type === "daily") perDay = amount;
+      else if (c.schedule_type === "weekly") perDay = wds.length ? (wds.includes(w) ? amount : 0) : amount / 7;
+      else perDay = amount / 30;
+      if (perDay > 0) sueldoDia.set(`${c.shift_id}|${w}`, (sueldoDia.get(`${c.shift_id}|${w}`) ?? 0) + perDay);
+    }
+  }
+  // costo de personal SOLO de los días realmente operados (con turno abierto)
+  const laborGrid = new Map<string, number>();
+  const opSeen = new Set<string>();
+  for (const s of sessions ?? []) {
+    const dayKey = `${s.business_date}|${s.shift_id}`;
+    if (opSeen.has(dayKey)) continue;
+    opSeen.add(dayKey);
+    const w = parseLocal(s.business_date).getDay();
+    const sd = sueldoDia.get(`${s.shift_id}|${w}`) ?? 0;
+    const k = `${w}|${s.shift_id}`;
+    laborGrid.set(k, (laborGrid.get(k) ?? 0) + sd);
+  }
+  const shiftCols = (shifts ?? []).map((s) => ({ id: s.id, name: s.name }));
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const heatmap = order.map((w) => ({
+    weekday: w,
+    label: WEEKDAYS[w],
+    cells: shiftCols.map((sh) => {
+      const v = ventasGrid.get(`${w}|${sh.id}`) ?? 0;
+      const c = laborGrid.get(`${w}|${sh.id}`) ?? 0;
+      return { shiftId: sh.id, ventas: v, costo: c, efic: c > 0 ? v / c : null };
+    }),
+  }));
+
+  // ingeniería de menú normalizada por día servido
+  const platoMap = new Map<string, { ventas: number; costo: number; dias: Set<string> }>();
+  for (const r of ddc ?? []) {
+    const e = platoMap.get(r.dish_id) ?? { ventas: 0, costo: 0, dias: new Set<string>() };
+    e.ventas += Number(r.price) * Number(r.qty);
+    e.costo += Number(r.unit_cost) * Number(r.qty);
+    if (Number(r.qty) > 0) e.dias.add(r.business_date);
+    platoMap.set(r.dish_id, e);
+  }
+  const platos = [...platoMap.entries()]
+    .map(([id, v]) => {
+      const utilidad = v.ventas - v.costo;
+      const dias = v.dias.size || 1;
+      return {
+        name: dishName.get(id) ?? "—",
+        ventas: v.ventas,
+        costo: v.costo,
+        dias: v.dias.size,
+        gananciaPorDia: utilidad / dias,
+        margenPct: v.ventas > 0 ? (utilidad / v.ventas) * 100 : 0,
+      };
+    })
+    .sort((a, b) => b.gananciaPorDia - a.gananciaPorDia);
+
+  // tendencia diaria: ventas vs costos totales del día (directo + gastos + fijos)
+  const ventasByDate = new Map<string, number>();
+  for (const s of sales ?? [])
+    ventasByDate.set(s.business_date, (ventasByDate.get(s.business_date) ?? 0) + Number(s.total));
+  const costoDirByDate = new Map<string, number>();
+  for (const b of batches ?? [])
+    costoDirByDate.set(b.business_date, (costoDirByDate.get(b.business_date) ?? 0) + Number(b.total_cost));
+  for (const m of moves ?? []) {
+    const ing = m.ingredients as unknown as { costing_method: string } | null;
+    if (m.type === "venta" && ing && ing.costing_method !== "tanda") {
+      const v = Math.abs(Number(m.qty)) * Number(m.unit_cost);
+      costoDirByDate.set(m.business_date, (costoDirByDate.get(m.business_date) ?? 0) + v);
+    }
+  }
+  const gastosByDate = new Map<string, number>();
+  for (const e of expensesRows ?? [])
+    gastosByDate.set(e.business_date, (gastosByDate.get(e.business_date) ?? 0) + Number(e.amount));
+
+  const serieDiaria = dates.map((d) => {
+    const k = fdate(d);
+    const wd = d.getDay();
+    let fijoDia = 0;
+    for (const c of recurring ?? []) {
+      const amount = Number(c.amount);
+      if (c.schedule_type === "daily") fijoDia += amount;
+      else if (c.schedule_type === "weekly") {
+        const wds = (c.weekdays as number[] | null) ?? [];
+        fijoDia += wds.length ? (wds.includes(wd) ? amount : 0) : amount / 7;
+      } else fijoDia += amount / 30;
+    }
+    const ventasD = ventasByDate.get(k) ?? 0;
+    const costos = (costoDirByDate.get(k) ?? 0) + (gastosByDate.get(k) ?? 0) + fijoDia;
+    return { date: k, ventas: ventasD, costos, utilidad: ventasD - costos };
+  });
+
+  const ventasPrev = (prevSales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  const ventasDeltaPct = ventasPrev > 0 ? ((ventas - ventasPrev) / ventasPrev) * 100 : null;
+
+  return {
+    ventas,
+    costoDirecto,
+    margenContribucion,
+    fijos,
+    gastos,
+    gastosItems,
+    gastosPorResponsable,
+    utilidadNeta,
+    margenPct,
+    mermaTotal,
+    desfaseTotal,
+    perdidaTotal,
+    indiceContraccion,
+    shiftCols,
+    heatmap,
+    serieDiaria,
+    ventasPrev,
+    ventasDeltaPct,
+    platos,
+    mermaPorDia,
+    mermaInsight,
+    desfasePorDia,
+    desfasePorResponsable,
+  };
+}
+
+// ===========================================================================
+//  HISTORIAL DE COSTO DE UN PLATO
+// ===========================================================================
+export async function listDishCatalog(db: Db, restaurantId: string) {
+  const { data } = await db.from("dishes").select("id,name,price,active")
+    .eq("restaurant_id", restaurantId).order("name");
+  return data ?? [];
+}
+
+export async function computeDishHistory(
+  db: Db,
+  restaurantId: string,
+  dishId: string,
+  from: string,
+  to: string,
+) {
+  const { data } = await db.from("dish_daily_cost")
+    .select("business_date,unit_cost,price")
+    .eq("restaurant_id", restaurantId).eq("dish_id", dishId)
+    .gte("business_date", from).lte("business_date", to)
+    .order("business_date");
+  return (data ?? []).map((r) => ({
+    date: r.business_date,
+    costo: Number(r.unit_cost),
+    precio: Number(r.price),
+  }));
+}
+
+// ===========================================================================
+//  P&L (rango from..to) + punto de equilibrio
+// ===========================================================================
+export interface PnL {
+  dias: number;
+  ventas: number;
+  costoDirecto: number;
+  margenContribucion: number;
+  fijoOperativo: number;
+  fijoAdministrativo: number;
+  fijoFinanciero: number;
+  utilidadOperativa: number;
+  utilidadNeta: number;
+  puntoEquilibrioDiario: number | null;
+}
+
+export async function computePnL(
+  db: Db,
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<PnL> {
+  const dates = eachDate(from, to);
+  const days = dates.length;
+
+  const [{ data: sales }, { data: batches }, { data: recurring }] = await Promise.all([
+    db.from("sales").select("total")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("production_batches").select("total_cost")
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+    db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active")
+      .eq("restaurant_id", restaurantId).eq("active", true),
+  ]);
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  const costoDirecto = (batches ?? []).reduce((s, b) => s + Number(b.total_cost), 0);
+  const margenContribucion = ventas - costoDirecto;
+
+  const fijos = { operativo: 0, administrativo: 0, financiero: 0 };
+  for (const c of recurring ?? []) {
+    const amount = Number(c.amount);
+    let monto = 0;
+    if (c.schedule_type === "daily") monto = amount * days;
+    else if (c.schedule_type === "weekly") {
+      const wd = (c.weekdays as number[] | null) ?? [];
+      monto = wd.length ? amount * dates.filter((d) => wd.includes(d.getDay())).length : amount * (days / 7);
+    } else monto = amount * (days / 30);
+    if (c.category === "administrativo") fijos.administrativo += monto;
+    else if (c.category === "financiero") fijos.financiero += monto;
+    else fijos.operativo += monto;
+  }
+
+  const utilidadOperativa = margenContribucion - fijos.operativo - fijos.administrativo;
+  const utilidadNeta = utilidadOperativa - fijos.financiero;
+  const fijosTotales = fijos.operativo + fijos.administrativo + fijos.financiero;
+  const margenRatio = ventas > 0 ? margenContribucion / ventas : 0;
+  const puntoEquilibrioDiario = margenRatio > 0 ? fijosTotales / days / margenRatio : null;
+
+  return {
+    dias: days,
+    ventas,
+    costoDirecto,
+    margenContribucion,
+    fijoOperativo: fijos.operativo,
+    fijoAdministrativo: fijos.administrativo,
+    fijoFinanciero: fijos.financiero,
+    utilidadOperativa,
+    utilidadNeta,
+    puntoEquilibrioDiario,
+  };
+}
