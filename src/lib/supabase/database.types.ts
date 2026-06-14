@@ -29,74 +29,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      audit_log: {
-        Row: {
-          action: string
-          created_at: string
-          entity: string | null
-          entity_id: string | null
-          id: string
-          payload: Json | null
-          reason: string | null
-          restaurant_id: string
-          shift_session_id: string | null
-          user_id: string | null
-        }
-        Insert: {
-          action: string
-          created_at?: string
-          entity?: string | null
-          entity_id?: string | null
-          id?: string
-          payload?: Json | null
-          reason?: string | null
-          restaurant_id: string
-          shift_session_id?: string | null
-          user_id?: string | null
-        }
-        Update: {
-          action?: string
-          created_at?: string
-          entity?: string | null
-          entity_id?: string | null
-          id?: string
-          payload?: Json | null
-          reason?: string | null
-          restaurant_id?: string
-          shift_session_id?: string | null
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "audit_log_restaurant_id_fkey"
-            columns: ["restaurant_id"]
-            isOneToOne: false
-            referencedRelation: "restaurants"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_log_shift_session_id_fkey"
-            columns: ["shift_session_id"]
-            isOneToOne: false
-            referencedRelation: "shift_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "audit_log_shift_session_id_fkey"
-            columns: ["shift_session_id"]
-            isOneToOne: false
-            referencedRelation: "v_caja_turno"
-            referencedColumns: ["shift_session_id"]
-          },
-          {
-            foreignKeyName: "audit_log_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       activity_events: {
         Row: {
           category: string
@@ -178,7 +110,82 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "activity_log_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "v_caja_turno"
+            referencedColumns: ["shift_session_id"]
+          },
+          {
             foreignKeyName: "activity_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_log: {
+        Row: {
+          action: string
+          created_at: string
+          entity: string | null
+          entity_id: string | null
+          id: string
+          payload: Json | null
+          reason: string | null
+          restaurant_id: string
+          shift_session_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          entity?: string | null
+          entity_id?: string | null
+          id?: string
+          payload?: Json | null
+          reason?: string | null
+          restaurant_id: string
+          shift_session_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          entity?: string | null
+          entity_id?: string | null
+          id?: string
+          payload?: Json | null
+          reason?: string | null
+          restaurant_id?: string
+          shift_session_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "shift_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "v_caja_turno"
+            referencedColumns: ["shift_session_id"]
+          },
+          {
+            foreignKeyName: "audit_log_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
@@ -1561,6 +1568,16 @@ export type Database = {
         }
         Returns: string
       }
+      bitacora_listar: {
+        Args: {
+          p_category?: string
+          p_event?: string
+          p_from: string
+          p_restaurant: string
+          p_to: string
+        }
+        Returns: Json
+      }
       cerrar_dia: {
         Args: {
           p_closed_by?: string
@@ -1615,23 +1632,9 @@ export type Database = {
         }
         Returns: Json
       }
-      bitacora_listar: {
-        Args: {
-          p_category?: string
-          p_event?: string
-          p_from: string
-          p_restaurant: string
-          p_to: string
-        }
-        Returns: Json
-      }
       conteo_estado: {
         Args: { p_date: string; p_restaurant: string }
         Returns: Json
-      }
-      purgar_bitacora: {
-        Args: { p_days?: number }
-        Returns: number
       }
       crear_restaurante: {
         Args: {
@@ -1677,6 +1680,7 @@ export type Database = {
         }
         Returns: Json
       }
+      purgar_bitacora: { Args: { p_days?: number }; Returns: number }
       registrar_compra: {
         Args: {
           p_date: string
