@@ -12,17 +12,14 @@ export default function Home() {
         El control de tu restaurante, hablando. Sin fricción.
       </p>
       <Link
-        href="/rincon-de-mi-hermana"
+        href="/panel"
         className="rounded-full bg-ink px-7 py-4 text-base font-semibold text-white"
       >
-        Entrar al restaurante demo
+        Panel de administración
       </Link>
       <p className="text-xs opacity-40">
         Cada restaurante tiene su ruta: /tu-restaurante
       </p>
-      <Link href="/panel" className="text-xs font-semibold underline opacity-50">
-        Panel de administración
-      </Link>
     </main>
   );
 }
