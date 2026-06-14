@@ -13,7 +13,7 @@ export default function SuperLogin() {
 
   const submit = () => {
     setError(null);
-    if (pin.length < 6) return setError("El PIN es de 6 dígitos.");
+    if (pin.length < 4) return setError("El PIN tiene de 4 a 6 dígitos.");
     start(async () => {
       const r = await superLoginAction(pin);
       if (r?.error) {

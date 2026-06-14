@@ -146,7 +146,7 @@ function CrearRestaurante() {
           <input className={`mt-1 ${input}`} value={adminName} onChange={(e) => setAdminName(e.target.value)} placeholder="Ana" />
         </label>
         <label className="text-xs font-medium text-black/60">
-          PIN del admin (6 dígitos)
+          PIN del admin (4–6 dígitos)
           <input
             className={`mt-1 ${input}`}
             value={pin}
@@ -279,7 +279,7 @@ function AddUser({ restaurantId }: { restaurantId: string }) {
         </select>
       </label>
       <label className="text-xs font-medium text-black/60">
-        PIN (6 díg.)
+        PIN (4–6 díg.)
         <input
           className={`mt-1 w-28 ${input}`}
           value={pin}

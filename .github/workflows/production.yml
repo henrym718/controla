@@ -1,0 +1,37 @@
+name: Production (Supabase)
+
+# Al entrar algo a main (merge del PR). Vercel ya despliega la app por su cuenta;
+# este pipeline SOLO toca Supabase: aplica migraciones y registra el PIN del panel.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-db
+  cancel-in-progress: false
+
+jobs:
+  supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Usamos la URL del SESSION POOLER (IPv4) para evitar el problema de IPv6
+      # de la conexión directa a la base desde los runners de GitHub.
+      - name: Aplicar migraciones a Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: supabase db push --db-url "$SUPABASE_DB_URL"
+
+      - name: Registrar el PIN del panel (super-admin)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPER_ADMIN_PIN: ${{ secrets.SUPER_ADMIN_PIN }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -v pin="$SUPER_ADMIN_PIN" \
+            -c "select set_super_pin(:'pin');"

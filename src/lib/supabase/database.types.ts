@@ -97,6 +97,27 @@ export type Database = {
           },
         ]
       }
+      auth_throttle: {
+        Row: {
+          blocked_until: string | null
+          fails: number
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          blocked_until?: string | null
+          fails?: number
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          blocked_until?: string | null
+          fails?: number
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       cash_movements: {
         Row: {
           amount: number
@@ -769,6 +790,24 @@ export type Database = {
           },
         ]
       }
+      platform_config: {
+        Row: {
+          id: number
+          super_pin_hash: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          super_pin_hash?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          super_pin_hash?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       production_batches: {
         Row: {
           business_date: string
@@ -1423,6 +1462,16 @@ export type Database = {
         Args: { p_pin: string; p_user: string }
         Returns: undefined
       }
+      auth_estado: { Args: { p_key: string }; Returns: string }
+      auth_intento: {
+        Args: {
+          p_block_min?: number
+          p_key: string
+          p_max?: number
+          p_ok: boolean
+        }
+        Returns: string
+      }
       cerrar_dia: {
         Args: {
           p_closed_by?: string
@@ -1466,14 +1515,6 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      auth_estado: {
-        Args: { p_key: string }
-        Returns: string
-      }
-      auth_intento: {
-        Args: { p_block_min?: number; p_key: string; p_max?: number; p_ok: boolean }
-        Returns: string
-      }
       conteo_estado: {
         Args: { p_date: string; p_restaurant: string }
         Returns: Json
@@ -1489,29 +1530,6 @@ export type Database = {
       }
       cuadres_dia: {
         Args: { p_date: string; p_restaurant: string }
-        Returns: Json
-      }
-      procesar_insumo: {
-        Args: {
-          p_date: string
-          p_input_id: string
-          p_input_qty: number
-          p_output_id: string
-          p_output_units?: number
-          p_restaurant: string
-          p_session: string
-          p_user: string
-        }
-        Returns: Json
-      }
-      registrar_conteo: {
-        Args: {
-          p_counts: Json
-          p_date: string
-          p_restaurant: string
-          p_session: string
-          p_user: string
-        }
         Returns: Json
       }
       fijar_menu: {
@@ -1532,6 +1550,19 @@ export type Database = {
           role: string
         }[]
       }
+      procesar_insumo: {
+        Args: {
+          p_date: string
+          p_input_id: string
+          p_input_qty: number
+          p_output_id: string
+          p_output_units?: number
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
       registrar_compra: {
         Args: {
           p_date: string
@@ -1543,6 +1574,16 @@ export type Database = {
           p_sale_price?: number
           p_session: string
           p_total_cost: number
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_conteo: {
+        Args: {
+          p_counts: Json
+          p_date: string
+          p_restaurant: string
+          p_session: string
           p_user: string
         }
         Returns: Json
@@ -1579,6 +1620,7 @@ export type Database = {
         Returns: Json
       }
       resumen_turno: { Args: { p_session_id: string }; Returns: Json }
+      set_super_pin: { Args: { p_pin: string }; Returns: undefined }
       ventas_por_dia_semana: {
         Args: { p_restaurant: string }
         Returns: {
@@ -1587,6 +1629,7 @@ export type Database = {
           weekday: number
         }[]
       }
+      verify_super_pin: { Args: { p_pin: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
