@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { setSession, clearSession, getSession } from "@/lib/auth/session";
 import { isShiftOpenNow, businessDate } from "@/lib/shifts";
+import { clientIp, minutesLeft } from "@/lib/throttle";
 import { computeDayReport } from "@/lib/reports";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -35,13 +36,25 @@ export async function loginAction(
     .maybeSingle();
   if (!shift) return { error: "Turno inválido." };
 
+  // Bloqueo anti fuerza bruta (server-side, por restaurante + IP).
+  const throttleKey = `${slug}:${await clientIp()}`;
+  const { data: blockedUntil } = await db.rpc("auth_estado", { p_key: throttleKey });
+  if (blockedUntil) {
+    return { error: `Demasiados intentos. Espera ${minutesLeft(blockedUntil)} min.` };
+  }
+
   const { data: users, error: pinErr } = await db.rpc("login_pin", {
     p_restaurant: rest.id,
     p_pin: pin,
   });
   if (pinErr) return { error: "Error validando el PIN." };
   const user = users?.[0];
-  if (!user) return { error: "PIN incorrecto." };
+  if (!user) {
+    const { data: until } = await db.rpc("auth_intento", { p_key: throttleKey, p_ok: false });
+    if (until) return { error: `Demasiados intentos. Espera ${minutesLeft(until)} min.` };
+    return { error: "PIN incorrecto." };
+  }
+  await db.rpc("auth_intento", { p_key: throttleKey, p_ok: true });
 
   // El admin no tiene horario; el empleado usa su horario (propio o el del turno).
   if (user.role !== "admin") {

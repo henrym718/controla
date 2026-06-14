@@ -36,4 +36,22 @@ export async function verifySession(token: string): Promise<SessionClaims | null
   }
 }
 
+/** Sesión del dueño de la plataforma (super-admin). Cookie aparte. */
+export async function signSuper(): Promise<string> {
+  return new SignJWT({ scope: "super" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${MAX_AGE_SECONDS}s`)
+    .sign(secret());
+}
+
+export async function verifySuper(token: string): Promise<boolean> {
+  try {
+    const { payload } = await jwtVerify(token, secret());
+    return (payload as { scope?: string }).scope === "super";
+  } catch {
+    return false;
+  }
+}
+
 export { MAX_AGE_SECONDS };

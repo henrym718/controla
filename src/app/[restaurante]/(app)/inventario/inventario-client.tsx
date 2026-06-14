@@ -5,6 +5,7 @@ import { PageTitle } from "@/components/ui";
 import {
   agregarProductoInventario,
   ajustarInventario,
+  procesarInsumoAction,
 } from "../admin/actions";
 
 interface Product {
@@ -21,19 +22,28 @@ const inputCls =
 
 export default function InventarioClient({ products }: { products: Product[] }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [showProcesar, setShowProcesar] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <PageTitle title="Inventario" />
-        <button
-          onClick={() => setShowAdd(true)}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-ink text-2xl font-bold text-white"
-          aria-label="Agregar producto"
-        >
-          +
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowProcesar(true)}
+            className="rounded-full bg-lav px-4 py-2 text-sm font-semibold"
+          >
+            Procesar
+          </button>
+          <button
+            onClick={() => setShowAdd(true)}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-ink text-2xl font-bold text-white"
+            aria-label="Agregar producto"
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* tabla */}
@@ -77,6 +87,112 @@ export default function InventarioClient({ products }: { products: Product[] }) 
       </p>
 
       {showAdd && <AddModal onClose={() => setShowAdd(false)} />}
+      {showProcesar && (
+        <ProcesarModal products={products} onClose={() => setShowProcesar(false)} />
+      )}
+    </div>
+  );
+}
+
+function ProcesarModal({
+  products,
+  onClose,
+}: {
+  products: Product[];
+  onClose: () => void;
+}) {
+  const [inputId, setInputId] = useState(products[0]?.id ?? "");
+  const [inputQty, setInputQty] = useState("");
+  const [outputName, setOutputName] = useState("");
+  const [outputUnits, setOutputUnits] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
+  const input = products.find((p) => p.id === inputId);
+  const iq = Number(inputQty) || 0;
+  const cost = (input?.cost ?? 0) * iq;
+  const ou = Number(outputUnits) || 0;
+
+  const submit = () => {
+    setMsg(null);
+    if (!inputId || iq <= 0) return setMsg("Elige el insumo y cuánto se usó.");
+    if (!outputName.trim()) return setMsg("Escribe qué salió (presa, tajada, tortilla…).");
+    start(async () => {
+      const r = await procesarInsumoAction({
+        inputId,
+        inputQty: iq,
+        outputName: outputName.trim(),
+        outputUnits: ou > 0 ? ou : null,
+      });
+      if (r.error) setMsg(r.error);
+      else onClose();
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-5">
+        <p className="text-lg font-bold">Procesar insumo</p>
+        <p className="mb-3 text-xs opacity-50">
+          Ej: de 2 pollos salieron 28 presas. Hereda el costo del crudo.
+        </p>
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-medium opacity-60">Insumo crudo (sale del stock)</label>
+          <select
+            value={inputId}
+            onChange={(e) => setInputId(e.target.value)}
+            className={inputCls}
+          >
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} (stock {p.stock})
+              </option>
+            ))}
+          </select>
+          <input
+            value={inputQty}
+            onChange={(e) => setInputQty(e.target.value)}
+            inputMode="decimal"
+            className={inputCls}
+            placeholder="¿Cuánto se usó? (ej. 2)"
+          />
+          <p className="text-center text-xs opacity-60">
+            Costo que se traslada: <span className="font-bold">${cost.toFixed(2)}</span>
+          </p>
+          <label className="text-xs font-medium opacity-60">¿Qué salió?</label>
+          <input
+            value={outputName}
+            onChange={(e) => setOutputName(e.target.value)}
+            className={inputCls}
+            placeholder="Presa, tajada, tortilla…"
+          />
+          <input
+            value={outputUnits}
+            onChange={(e) => setOutputUnits(e.target.value)}
+            inputMode="numeric"
+            className={inputCls}
+            placeholder="¿Cuántas salieron? (vacío = a granel)"
+          />
+          {ou > 0 && iq > 0 && (
+            <p className="text-center text-xs opacity-60">
+              Costo por unidad: <span className="font-bold">${(cost / ou).toFixed(2)}</span>
+            </p>
+          )}
+          <div className="mt-1 flex gap-2">
+            <button
+              onClick={submit}
+              disabled={pending}
+              className="flex-1 rounded-full bg-ink py-3 font-semibold text-white"
+            >
+              {pending ? "Guardando…" : "Procesar"}
+            </button>
+            <button onClick={onClose} className="rounded-full border border-ink/15 px-5 py-3 font-semibold">
+              Cancelar
+            </button>
+          </div>
+          {msg && <p className="text-center text-sm text-coral">{msg}</p>}
+        </div>
+      </div>
     </div>
   );
 }

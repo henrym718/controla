@@ -1466,16 +1466,51 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      cuadres_dia: {
+      auth_estado: {
+        Args: { p_key: string }
+        Returns: string
+      }
+      auth_intento: {
+        Args: { p_block_min?: number; p_key: string; p_max?: number; p_ok: boolean }
+        Returns: string
+      }
+      conteo_estado: {
+        Args: { p_date: string; p_restaurant: string }
+        Returns: Json
+      }
+      crear_restaurante: {
         Args: {
-          p_date: string
-          p_restaurant: string
+          p_admin_name: string
+          p_admin_pin: string
+          p_name: string
+          p_slug: string
         }
         Returns: Json
       }
-      resumen_turno: {
+      cuadres_dia: {
+        Args: { p_date: string; p_restaurant: string }
+        Returns: Json
+      }
+      procesar_insumo: {
         Args: {
-          p_session_id: string
+          p_date: string
+          p_input_id: string
+          p_input_qty: number
+          p_output_id: string
+          p_output_units?: number
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_conteo: {
+        Args: {
+          p_counts: Json
+          p_date: string
+          p_restaurant: string
+          p_session: string
+          p_user: string
         }
         Returns: Json
       }
@@ -1543,6 +1578,7 @@ export type Database = {
         }
         Returns: Json
       }
+      resumen_turno: { Args: { p_session_id: string }; Returns: Json }
       ventas_por_dia_semana: {
         Args: { p_restaurant: string }
         Returns: {

@@ -20,6 +20,9 @@ export default function Home() {
       <p className="text-xs opacity-40">
         Cada restaurante tiene su ruta: /tu-restaurante
       </p>
+      <Link href="/panel" className="text-xs font-semibold underline opacity-50">
+        Panel de administración
+      </Link>
     </main>
   );
 }

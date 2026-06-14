@@ -21,6 +21,7 @@ export default async function AdminPage({
     { href: `${base}/historico`, label: "Histórico de platos", tone: "bg-sand" },
     { href: `${base}/catalogo`, label: "Catálogo de platos", tone: "bg-lav" },
     { href: `${base}/inventario`, label: "Inventario", tone: "bg-mint" },
+    { href: `${base}/conteo`, label: "Conteo de cierre", tone: "bg-sand" },
     { href: `${base}/cierre-dia`, label: "Cerrar el día", tone: "bg-peach" },
     { href: `${base}/usuarios`, label: "Usuarios y PINs", tone: "bg-sand" },
     { href: `${base}/turnos`, label: "Turnos", tone: "bg-lav" },

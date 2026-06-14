@@ -318,6 +318,85 @@ export async function agregarProductoInventario(input: {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------- Conteo de cierre (esperado vs contado)
+export async function registrarConteoAction(
+  date: string,
+  counts: { ingredientId: string; countedQty: number; tag?: string | null }[],
+): Promise<{ error?: string; faltante?: number }> {
+  const { session, db } = await admin();
+  if (counts.length === 0) return { error: "No hay nada que contar." };
+  const { data, error } = await db.rpc("registrar_conteo", {
+    p_restaurant: session.restaurant_id,
+    p_session: session.shift_session_id,
+    p_user: session.user_id,
+    p_date: date,
+    p_counts: counts.map((c) => ({
+      ingredient_id: c.ingredientId,
+      counted_qty: c.countedQty,
+      tag: c.tag ?? null,
+    })) as unknown as Json,
+  });
+  if (error) return { error: error.message };
+  const d = data as { faltante_cost?: number } | null;
+  revalidatePath(`/${session.slug}/conteo`);
+  return { faltante: Number(d?.faltante_cost ?? 0) };
+}
+
+// ---------------------------------------------------------------- Procesar insumo (crudo → procesado)
+export async function procesarInsumoAction(input: {
+  inputId: string;
+  inputQty: number;
+  outputName: string;
+  outputUnits?: number | null;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!input.inputId || !input.inputQty || input.inputQty <= 0) {
+    return { error: "Indica el insumo de origen y cuánto se usó." };
+  }
+  if (!input.outputName.trim()) return { error: "Indica qué salió (presa, tajada, tortilla…)." };
+
+  // resolver/crear el insumo de salida
+  const contable = input.outputUnits != null && input.outputUnits > 0;
+  const { data: existing } = await db
+    .from("ingredients")
+    .select("id")
+    .eq("restaurant_id", session.restaurant_id)
+    .ilike("name", input.outputName.trim())
+    .limit(1);
+
+  let outId = existing?.[0]?.id;
+  if (!outId) {
+    const { data: created, error } = await db
+      .from("ingredients")
+      .insert({
+        restaurant_id: session.restaurant_id,
+        name: input.outputName.trim(),
+        kind: contable ? "contable" : "granel",
+        costing_method: contable ? "tanda" : "pool",
+        consumption_unit: contable ? "unidad" : null,
+      })
+      .select("id")
+      .single();
+    if (error) return { error: error.message };
+    outId = created?.id;
+  }
+  if (!outId) return { error: "No pude registrar la salida." };
+
+  const { error } = await db.rpc("procesar_insumo", {
+    p_restaurant: session.restaurant_id,
+    p_session: session.shift_session_id,
+    p_user: session.user_id,
+    p_date: businessDate(),
+    p_input_id: input.inputId,
+    p_input_qty: input.inputQty,
+    p_output_id: outId,
+    p_output_units: input.outputUnits ?? undefined,
+  });
+  if (error) return { error: error.message };
+  revalidatePath(`/${session.slug}/inventario`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- Ajuste de inventario (auditado)
 export async function ajustarInventario(input: {
   ingredientId: string;

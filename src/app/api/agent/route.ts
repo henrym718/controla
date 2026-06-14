@@ -33,6 +33,7 @@ function buildSystem(
     "- GASTO (servilletas, escoba, gas, servicios) NO es inventario → usa registrar_gasto. COMPRA de algo que ENTRA al inventario (arroz, aceite, colas) → usa registrar_compra.",
     "- En gastos y compras, pregunta si el dinero salió de la CAJA o lo puso la JEFA (fuente_pago).",
     "- Producción: si dicen cuántas unidades salieron (presas, bolsitas) es contable; si no (arroz, sopa), es a granel.",
+    "- PROCESAR un crudo (ej. 'de 2 pollos salieron 28 presas', 'de 20 dedos salieron 20 tortillas') → usa procesar_insumo: consume el crudo del inventario y hereda su costo. NO preguntes el costo. Con unidades = contable; sin unidades = granel.",
     "- Para retiros de caja o de inventario, el motivo es obligatorio.",
     "- La app pedirá confirmación antes de guardar; tú solo decide la acción.",
     "",

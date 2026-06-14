@@ -180,6 +180,12 @@ const produccionSchema = z.object({
   total_cost: z.coerce.number().nonnegative(),
   units_produced: z.coerce.number().positive().optional(),
 });
+const procesarSchema = z.object({
+  input_name: z.string().min(1),
+  input_qty: z.coerce.number().positive(),
+  output_name: z.string().min(1),
+  output_units: z.coerce.number().positive().optional(),
+});
 const compraSchema = z.object({
   ingredient_name: z.string().min(1),
   total_cost: z.coerce.number().positive(),
@@ -551,6 +557,74 @@ export const TOOLS: Record<string, Tool> = {
       }
       await audit(ctx, "produccion", "production_batches", batch?.id ?? null, a);
       return { message: `✅ ${ing.name} a granel: +${money(a.total_cost)} al pool del día.` };
+    },
+  },
+
+  procesar_insumo: {
+    name: "procesar_insumo",
+    mode: "write",
+    description:
+      "Convierte un insumo CRUDO en otro consumiendo su stock: ej. 'de 2 pollos salieron 28 presas', 'de 20 dedos de verde salieron 20 tortillas'. Si dicen cuántas unidades salieron, la salida es contable (costo exacto por unidad); si no, va a granel (pool del día). HEREDA el costo del crudo — NO preguntes el costo.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        input_name: { type: "STRING", description: "Insumo crudo usado (pollo, libra de carne, dedo de verde)" },
+        input_qty: { type: "NUMBER", description: "Cuánto del crudo se usó" },
+        output_name: { type: "STRING", description: "Qué salió (presa, tajada, tortilla)" },
+        output_units: { type: "NUMBER", description: "Cuántas unidades salieron (omitir si es a granel)" },
+      },
+      required: ["input_name", "input_qty", "output_name"],
+    },
+    validate: (raw) => procesarSchema.parse(raw),
+    preview: async (args, ctx) => {
+      const a = procesarSchema.parse(args);
+      const inp = await resolveIngredient(ctx, a.input_name);
+      if (!inp) throw new Error(`No conozco "${a.input_name}". Regístralo como compra primero.`);
+      const cost = a.input_qty * Number(inp.last_unit_cost ?? 0);
+      return a.output_units
+        ? `Procesar: ${a.input_qty} × ${inp.name} → ${a.output_units} × ${a.output_name} (costo ${money(cost)}, ${money(cost / a.output_units)} c/u). ¿Confirmo?`
+        : `Procesar a granel: ${a.input_qty} × ${inp.name} → ${a.output_name} (${money(cost)} al pool). ¿Confirmo?`;
+    },
+    execute: async (args, ctx) => {
+      const a = procesarSchema.parse(args);
+      const inp = await resolveIngredient(ctx, a.input_name);
+      if (!inp) throw new Error(`No conozco "${a.input_name}".`);
+      if (inp.kind !== "contable")
+        throw new Error(`${inp.name} es a granel; no se procesa por unidades.`);
+
+      const contable = a.output_units != null;
+      let out = await resolveIngredient(ctx, a.output_name);
+      if (!out) {
+        const { data: created } = await ctx.db
+          .from("ingredients")
+          .insert({
+            restaurant_id: ctx.session.restaurant_id,
+            name: a.output_name,
+            kind: contable ? "contable" : "granel",
+            costing_method: contable ? "tanda" : "pool",
+            consumption_unit: contable ? "unidad" : null,
+          })
+          .select("id,name,kind,costing_method,last_unit_cost,is_disposable,is_sellable,sale_price")
+          .single();
+        out = created ?? null;
+      }
+      if (!out) throw new Error("No pude registrar la salida.");
+
+      const { data, error } = await ctx.db.rpc("procesar_insumo", {
+        p_restaurant: ctx.session.restaurant_id,
+        p_session: ctx.session.shift_session_id,
+        p_user: ctx.session.user_id,
+        p_date: businessDate(),
+        p_input_id: inp.id,
+        p_input_qty: a.input_qty,
+        p_output_id: out.id,
+        p_output_units: a.output_units,
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { cost?: number; unit_cost?: number } | null;
+      return a.output_units
+        ? { message: `✅ Procesado: ${a.output_units} × ${out.name} (${money(Number(d?.unit_cost ?? 0))} c/u).` }
+        : { message: `✅ ${out.name} a granel: +${money(Number(d?.cost ?? 0))} al pool.` };
     },
   },
 
