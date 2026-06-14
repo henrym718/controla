@@ -4,6 +4,7 @@ import type { Database, Json } from "@/lib/supabase/database.types";
 import type { SessionClaims } from "@/lib/auth/jwt";
 import { businessDate } from "@/lib/shifts";
 import { computeDaySummary } from "@/lib/reports";
+import { logActivity, type EventCode } from "@/lib/activity";
 
 export type Db = SupabaseClient<Database>;
 export interface ToolCtx {
@@ -121,23 +122,22 @@ async function resolveSaleTarget(
   return { kind: "plato", dishId: null, ingredientId: null, name, price: unitPrice ?? null, source: "nuevo" };
 }
 
-async function audit(
+/** Registra el evento en la bitácora (toda acción de la IA es source 'ia'). */
+async function logEvent(
   ctx: ToolCtx,
-  action: string,
-  entity: string,
-  entityId: string | null,
-  payload: Record<string, unknown>,
-  reason?: string,
+  event: EventCode,
+  description: string,
+  metadata?: Record<string, unknown>,
 ) {
-  await ctx.db.from("audit_log").insert({
-    restaurant_id: ctx.session.restaurant_id,
-    user_id: ctx.session.user_id,
-    shift_session_id: ctx.session.shift_session_id,
-    action,
-    entity,
-    entity_id: entityId,
-    payload: payload as Json,
-    reason: reason ?? null,
+  await logActivity(ctx.db, {
+    restaurantId: ctx.session.restaurant_id,
+    userId: ctx.session.user_id,
+    actorName: ctx.session.user_name,
+    shiftSessionId: ctx.session.shift_session_id,
+    source: "ia",
+    event,
+    description,
+    metadata,
   });
 }
 
@@ -185,6 +185,10 @@ const procesarSchema = z.object({
   input_qty: z.coerce.number().positive(),
   output_name: z.string().min(1),
   output_units: z.coerce.number().positive().optional(),
+});
+const consumoSchema = z.object({
+  ingredient_name: z.string().min(1),
+  qty: z.coerce.number().positive(),
 });
 const compraSchema = z.object({
   ingredient_name: z.string().min(1),
@@ -293,6 +297,12 @@ export const TOOLS: Record<string, Tool> = {
         p_items: items as unknown as Json,
       });
       if (error) throw new Error(error.message);
+      await logEvent(
+        ctx,
+        "menu",
+        `Fijó el menú de hoy (${items.length} ${items.length === 1 ? "plato" : "platos"})`,
+        { count: items.length },
+      );
       return { message: `✅ Menú de hoy fijado: ${items.length} platos.` };
     },
   },
@@ -339,7 +349,9 @@ export const TOOLS: Record<string, Tool> = {
         .eq("business_date", businessDate())
         .eq("shift_id", ctx.session.shift_id)
         .eq("dish_id", dish.id);
-      await audit(ctx, "agotado", "daily_menu", dish.id, a);
+      await logEvent(ctx, "agotado", `Marcó "${dish.name}" como agotado hoy`, {
+        dish: dish.name,
+      });
       return { message: `✅ "${dish.name}" marcado como agotado hoy.` };
     },
   },
@@ -413,6 +425,12 @@ export const TOOLS: Record<string, Tool> = {
       } as unknown as Database["public"]["Functions"]["registrar_venta"]["Args"]);
       if (error) throw new Error(error.message);
       const total = Number((data as { total?: number } | null)?.total ?? t.price * a.qty);
+      await logEvent(
+        ctx,
+        "venta",
+        `Venta de ${a.qty} × ${t.name} por ${money(total)} (${a.service_type}, ${a.payment_method})`,
+        { item: t.name, qty: a.qty, total, payment_method: a.payment_method },
+      );
       return { message: `✅ Venta: ${a.qty} × ${t.name} = ${money(total)}.` };
     },
   },
@@ -422,7 +440,7 @@ export const TOOLS: Record<string, Tool> = {
     name: "registrar_compra",
     mode: "write",
     description:
-      "Registra una compra de un producto/insumo que ENTRA al inventario (arroz, aceite, colas). Indica cantidad y, si se vende, su precio de venta. Pregunta si el dinero salió de la caja o lo puso la jefa.",
+      "Registra una compra de un producto/insumo que ENTRA al inventario (arroz, aceite, colas). Indica la cantidad. Si el producto YA existe en el inventario, NO vuelvas a preguntar el precio de venta (ya está guardado) y el costo se promedia solo con lo que había; solo pregunta el precio de venta la primera vez para un producto vendible nuevo. Pregunta si el dinero salió de la caja o lo puso la jefa.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -476,6 +494,13 @@ export const TOOLS: Record<string, Tool> = {
       });
       if (error) throw new Error(error.message);
       const sp = a.sale_price ? ` (se vende a ${money(a.sale_price)})` : "";
+      const qtyTxt = a.quantity ? ` (${a.quantity} u)` : "";
+      await logEvent(
+        ctx,
+        "compra",
+        `Compra de ${ing.name} por ${money(a.total_cost)}${qtyTxt} — pagó ${a.fuente_pago === "jefa" ? "la jefa" : "la caja"}`,
+        { ingredient: ing.name, total_cost: a.total_cost, quantity: a.quantity ?? null, fuente: a.fuente_pago },
+      );
       return { message: `✅ Compra: ${ing.name} ${money(a.total_cost)}${sp}.` };
     },
   },
@@ -552,10 +577,20 @@ export const TOOLS: Record<string, Tool> = {
           ref_table: "production_batches",
           ref_id: batch?.id ?? null,
         });
-        await audit(ctx, "produccion", "production_batches", batch?.id ?? null, a);
+        await logEvent(
+          ctx,
+          "produccion",
+          `Producción de ${a.units_produced} × ${ing.name} por ${money(a.total_cost)} (${money(unit)} c/u)`,
+          { ingredient: ing.name, units: a.units_produced, total_cost: a.total_cost },
+        );
         return { message: `✅ Producción: ${a.units_produced} × ${ing.name} (${money(unit)} c/u).` };
       }
-      await audit(ctx, "produccion", "production_batches", batch?.id ?? null, a);
+      await logEvent(
+        ctx,
+        "produccion",
+        `Producción a granel de ${ing.name} por ${money(a.total_cost)} (al pool del día)`,
+        { ingredient: ing.name, total_cost: a.total_cost, granel: true },
+      );
       return { message: `✅ ${ing.name} a granel: +${money(a.total_cost)} al pool del día.` };
     },
   },
@@ -622,9 +657,64 @@ export const TOOLS: Record<string, Tool> = {
       });
       if (error) throw new Error(error.message);
       const d = data as { cost?: number; unit_cost?: number } | null;
+      await logEvent(
+        ctx,
+        "procesar",
+        a.output_units
+          ? `Procesó ${a.input_qty} × ${inp.name} → ${a.output_units} × ${out.name}`
+          : `Procesó ${a.input_qty} × ${inp.name} → ${out.name} (a granel)`,
+        { input: inp.name, input_qty: a.input_qty, output: out.name, output_units: a.output_units ?? null },
+      );
       return a.output_units
         ? { message: `✅ Procesado: ${a.output_units} × ${out.name} (${money(Number(d?.unit_cost ?? 0))} c/u).` }
         : { message: `✅ ${out.name} a granel: +${money(Number(d?.cost ?? 0))} al pool.` };
+    },
+  },
+
+  consumir_insumo: {
+    name: "consumir_insumo",
+    mode: "write",
+    description:
+      "Registra un insumo CONTABLE que se usó HOY para cocinar, sin venderlo y sin nombrar un resultado: ej. 'consumimos 4 tomates', 'usamos 10 huevos para la comida de hoy'. Baja el stock y suma su costo al pool/costo del día. HEREDA el costo del inventario — NO preguntes el costo.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        ingredient_name: { type: "STRING", description: "Insumo que se consumió" },
+        qty: { type: "NUMBER", description: "Cuánto se consumió hoy" },
+      },
+      required: ["ingredient_name", "qty"],
+    },
+    validate: (raw) => consumoSchema.parse(raw),
+    preview: async (args, ctx) => {
+      const a = consumoSchema.parse(args);
+      const ing = await resolveIngredient(ctx, a.ingredient_name);
+      if (!ing) throw new Error(`No conozco "${a.ingredient_name}".`);
+      const cost = a.qty * Number(ing.last_unit_cost ?? 0);
+      return `Consumo de hoy: ${a.qty} × ${ing.name} (${money(cost)} al costo del día). ¿Confirmo?`;
+    },
+    execute: async (args, ctx) => {
+      const a = consumoSchema.parse(args);
+      const ing = await resolveIngredient(ctx, a.ingredient_name);
+      if (!ing) throw new Error(`No conozco "${a.ingredient_name}".`);
+      if (ing.kind !== "contable")
+        throw new Error(`${ing.name} es a granel; regístralo como producción/cocción.`);
+      const { data, error } = await ctx.db.rpc("consumir_insumo", {
+        p_restaurant: ctx.session.restaurant_id,
+        p_session: ctx.session.shift_session_id,
+        p_user: ctx.session.user_id,
+        p_date: businessDate(),
+        p_ingredient_id: ing.id,
+        p_qty: a.qty,
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { cost?: number } | null;
+      await logEvent(
+        ctx,
+        "consumo",
+        `Consumo del día: ${a.qty} × ${ing.name} (${money(Number(d?.cost ?? 0))})`,
+        { ingredient: ing.name, qty: a.qty, cost: Number(d?.cost ?? 0) },
+      );
+      return { message: `✅ Consumo del día: ${a.qty} × ${ing.name} (${money(Number(d?.cost ?? 0))}).` };
     },
   },
 
@@ -663,7 +753,12 @@ export const TOOLS: Record<string, Tool> = {
         unit_cost: Number(ing.last_unit_cost ?? 0),
         reason: a.reason,
       });
-      await audit(ctx, "retiro_insumo", "ingredients", ing.id, a, a.reason);
+      await logEvent(
+        ctx,
+        "retiro_insumo",
+        `Retiró ${a.qty} × ${ing.name} del inventario — ${a.reason}`,
+        { ingredient: ing.name, qty: a.qty, reason: a.reason },
+      );
       return { message: `✅ Retiro: ${a.qty} × ${ing.name} — ${a.reason}.` };
     },
   },
@@ -700,7 +795,12 @@ export const TOOLS: Record<string, Tool> = {
         unit_cost: Number(ing.last_unit_cost ?? 0),
         reason: a.reason ?? null,
       });
-      await audit(ctx, "merma_insumo", "ingredients", ing.id, a, a.reason);
+      await logEvent(
+        ctx,
+        "merma",
+        `Merma de ${a.qty} × ${ing.name}${a.reason ? ` — ${a.reason}` : ""}`,
+        { ingredient: ing.name, qty: a.qty, reason: a.reason ?? null },
+      );
       return { message: `✅ Merma: ${a.qty} × ${ing.name}.` };
     },
   },
@@ -752,7 +852,12 @@ export const TOOLS: Record<string, Tool> = {
           { onConflict: "dish_id,ingredient_id" },
         );
       }
-      await audit(ctx, "receta", "dishes", dish.id, a);
+      await logEvent(
+        ctx,
+        "receta",
+        `Actualizó la receta de ${dish.name} (${a.components.length} insumos)`,
+        { dish: dish.name, components: a.components.length },
+      );
       return { message: `✅ Receta de ${dish.name} actualizada (${a.components.length} insumos).` };
     },
   },
@@ -792,6 +897,12 @@ export const TOOLS: Record<string, Tool> = {
         p_fuente: a.fuente_pago,
       });
       if (error) throw new Error(error.message);
+      await logEvent(
+        ctx,
+        "gasto",
+        `Gasto de ${money(a.amount)} (${a.category})${a.note ? ` — ${a.note}` : ""} — pagó ${a.fuente_pago === "jefa" ? "la jefa" : "la caja"}`,
+        { amount: a.amount, category: a.category, note: a.note ?? null, fuente: a.fuente_pago },
+      );
       return { message: `✅ Gasto registrado: ${money(a.amount)} (${a.category}).` };
     },
   },
@@ -825,7 +936,12 @@ export const TOOLS: Record<string, Tool> = {
         })
         .select("id")
         .single();
-      await audit(ctx, "ingreso_caja", "cash_movements", data?.id ?? null, a, a.reason);
+      await logEvent(
+        ctx,
+        "ingreso_caja",
+        `Ingreso a caja de ${money(a.amount)}${a.reason ? ` — ${a.reason}` : ""}`,
+        { amount: a.amount, reason: a.reason ?? null },
+      );
       return { message: `✅ Ingreso a caja: ${money(a.amount)}.` };
     },
   },
@@ -861,7 +977,12 @@ export const TOOLS: Record<string, Tool> = {
         })
         .select("id")
         .single();
-      await audit(ctx, "egreso_caja", "cash_movements", data?.id ?? null, a, a.reason);
+      await logEvent(
+        ctx,
+        "egreso_caja",
+        `Retiro de caja de ${money(a.amount)} — ${a.reason}`,
+        { amount: a.amount, reason: a.reason },
+      );
       return { message: `✅ Retiro de caja: ${money(a.amount)} — ${a.reason}.` };
     },
   },
@@ -887,7 +1008,9 @@ export const TOOLS: Record<string, Tool> = {
         .update({ opening_cash: a.amount })
         .eq("id", ctx.session.shift_session_id)
         .eq("restaurant_id", ctx.session.restaurant_id);
-      await audit(ctx, "caja_inicial", "shift_sessions", ctx.session.shift_session_id, a);
+      await logEvent(ctx, "caja_inicial", `Fijó la caja inicial del turno en ${money(a.amount)}`, {
+        amount: a.amount,
+      });
       return { message: `✅ Caja inicial: ${money(a.amount)}.` };
     },
   },
@@ -1046,6 +1169,12 @@ export const TOOLS: Record<string, Tool> = {
       const esperada = Number(data?.expected_cash ?? 0);
       const dif = Number(data?.cash_discrepancy ?? 0);
       const entrega = Number(data?.deposit_amount ?? 0);
+      await logEvent(
+        ctx,
+        "cerrar_turno",
+        `Cerró el turno. Esperado ${money(esperada)}, contado ${money(a.counted_cash)}, descuadre ${money(dif)}`,
+        { expected: esperada, counted: a.counted_cash, discrepancy: dif, deposit: entrega },
+      );
       return {
         message: `🔒 Turno cerrado. Esperado ${money(esperada)}, contado ${money(a.counted_cash)}, descuadre ${money(dif)}. Base que queda ${money(base)}, entregado ${money(entrega)}.`,
         loggedOut: true,
@@ -1070,6 +1199,7 @@ export const TOOLS: Record<string, Tool> = {
         p_closed_by: ctx.session.user_id,
       });
       if (error) throw new Error(error.message);
+      await logEvent(ctx, "cerrar_dia", "Cerró el día (prorrateo del pool del granel)");
       return { message: "🔒 Día cerrado. Costos del pool calculados." };
     },
   },

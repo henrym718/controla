@@ -27,6 +27,7 @@ function buildSystem(
     "Reglas:",
     "- Responde SIEMPRE en español de Ecuador, breve y claro.",
     "- Usa una herramienta cuando la intención sea clara. Si falta un dato esencial, pregúntalo en una frase.",
+    "- Si la usuaria dicta VARIAS cosas en un mismo mensaje (ej. 'ingresa 20 gaseosas a $5 y también 100 discos de empanada a $20'), devuelve TODAS las llamadas a funciones necesarias, UNA por cada acción. No te quedes solo con la primera.",
     "- VENDER: usa el precio del MENÚ DE HOY. Si el plato no está en el menú ni en el catálogo, pregunta si se agrega y a qué precio. SIEMPRE confirma el precio, aunque ya esté en el catálogo.",
     "- Las colas/bebidas y demás PRODUCTOS del inventario se venden directo y descuentan stock.",
     "- 'Para llevar': se consume un envase (lonchera, bandeja, vaso). Si no está claro cuál, pregúntalo.",
@@ -34,6 +35,8 @@ function buildSystem(
     "- En gastos y compras, pregunta si el dinero salió de la CAJA o lo puso la JEFA (fuente_pago).",
     "- Producción: si dicen cuántas unidades salieron (presas, bolsitas) es contable; si no (arroz, sopa), es a granel.",
     "- PROCESAR un crudo (ej. 'de 2 pollos salieron 28 presas', 'de 20 dedos salieron 20 tortillas') → usa procesar_insumo: consume el crudo del inventario y hereda su costo. NO preguntes el costo. Con unidades = contable; sin unidades = granel.",
+    "- CONSUMO del día para cocinar, sin venderlo y sin nombrar un resultado (ej. 'consumimos 4 tomates', 'usamos 10 huevos hoy') → usa consumir_insumo: baja el stock y suma su costo al pool/costo del día de HOY. NO preguntes el costo.",
+    "- Al COMPRAR algo que YA existe en el inventario, NO vuelvas a preguntar el precio de venta (ya está guardado) ni el costo unitario: el costo se promedia solo con lo que había.",
     "- Para retiros de caja o de inventario, el motivo es obligatorio.",
     "- La app pedirá confirmación antes de guardar; tú solo decide la acción.",
     "",
@@ -144,38 +147,49 @@ export async function POST(req: Request) {
     return NextResponse.json({ transcript: userText, reply: `⚠️ ${msg}`, action: null });
   }
 
-  if (decision.functionCall) {
-    const tool = getTool(decision.functionCall.name);
-    if (!tool) {
-      return NextResponse.json({
-        transcript: userText,
-        reply: "No reconocí esa acción.",
-        action: null,
-      });
-    }
-    try {
-      const args = tool.validate(decision.functionCall.args);
-      if (tool.mode === "read") {
-        const r = await tool.execute(args, ctx);
-        return NextResponse.json({ transcript: userText, reply: r.message, action: null });
+  if (decision.functionCalls?.length) {
+    // Puede haber VARIAS acciones en un solo dictado: se procesan todas.
+    const actions: { tool: string; args: Record<string, unknown>; preview: string }[] = [];
+    const notas: string[] = [];
+
+    for (const fc of decision.functionCalls) {
+      const tool = getTool(fc.name);
+      if (!tool) {
+        notas.push("No reconocí una de las acciones.");
+        continue;
       }
-      const preview = tool.preview
-        ? await tool.preview(args, ctx)
-        : "¿Confirmo esta acción?";
-      return NextResponse.json({
-        transcript: userText,
-        reply: preview,
-        action: { tool: tool.name, args },
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "No pude preparar la acción";
-      return NextResponse.json({ transcript: userText, reply: `⚠️ ${msg}`, action: null });
+      try {
+        const args = tool.validate(fc.args);
+        if (tool.mode === "read") {
+          const r = await tool.execute(args, ctx);
+          notas.push(r.message);
+        } else {
+          const preview = tool.preview ? await tool.preview(args, ctx) : "¿Confirmo esta acción?";
+          actions.push({ tool: tool.name, args, preview });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "No pude preparar una acción";
+        notas.push(`⚠️ ${msg}`);
+      }
     }
+
+    if (actions.length) {
+      const lista = actions
+        .map((a, i) => (actions.length > 1 ? `${i + 1}. ${a.preview}` : a.preview))
+        .join("\n");
+      const reply = [lista, ...notas].filter(Boolean).join("\n");
+      return NextResponse.json({ transcript: userText, reply, actions });
+    }
+    return NextResponse.json({
+      transcript: userText,
+      reply: notas.join("\n") || "Listo",
+      actions: [],
+    });
   }
 
   return NextResponse.json({
     transcript: userText,
     reply: decision.text,
-    action: null,
+    actions: [],
   });
 }

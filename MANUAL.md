@@ -66,6 +66,11 @@ las unidades: va “a granel” (ver abajo).
 - “cociné arroz por $8”, “hice sopa por $6” → entra al **pool del día**. Al cerrar el día
   se reparte entre los platos vendidos.
 
+### 🥕 Consumir un insumo del inventario para cocinar hoy
+- “**consumimos 4 tomates**”, “**usamos 10 huevos para la comida de hoy**” → baja el stock de
+  ese insumo y suma su costo al **costo del día** (no hace falta decir qué se hizo con él, ni el
+  costo: lo toma del inventario). Úsalo para insumos sueltos que se gastan en la cocina.
+
 ### 📋 Menú del día
 | Qué pasó | Cómo decirlo |
 |---|---|

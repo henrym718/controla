@@ -11,29 +11,53 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
-  const { tool: name, args } = (await req.json()) as {
+  const body = (await req.json()) as {
     tool?: string;
     args?: unknown;
+    actions?: { tool: string; args: unknown }[];
   };
-  const tool = name ? getTool(name) : undefined;
-  if (!tool || tool.mode !== "write") {
+  // Acepta una sola acción {tool,args} o varias {actions:[...]}.
+  const actions =
+    body.actions && Array.isArray(body.actions)
+      ? body.actions
+      : body.tool
+        ? [{ tool: body.tool, args: body.args }]
+        : [];
+
+  if (actions.length === 0) {
     return NextResponse.json({ error: "Acción inválida" }, { status: 400 });
   }
 
   const db = createAdminClient();
   const ctx: ToolCtx = { db, session };
 
-  try {
-    const parsed = tool.validate(args);
-    const result = await tool.execute(parsed, ctx);
-    if (result.loggedOut) await clearSession();
-    return NextResponse.json({
-      ok: true,
-      reply: result.message,
-      loggedOut: !!result.loggedOut,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "No se pudo guardar";
-    return NextResponse.json({ ok: false, reply: `⚠️ ${msg}` }, { status: 200 });
+  const results: { ok: boolean; reply: string }[] = [];
+  let loggedOut = false;
+
+  for (const a of actions) {
+    const tool = a.tool ? getTool(a.tool) : undefined;
+    if (!tool || tool.mode !== "write") {
+      results.push({ ok: false, reply: "⚠️ Acción inválida" });
+      continue;
+    }
+    try {
+      const parsed = tool.validate(a.args);
+      const result = await tool.execute(parsed, ctx);
+      if (result.loggedOut) loggedOut = true;
+      results.push({ ok: true, reply: result.message });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "No se pudo guardar";
+      results.push({ ok: false, reply: `⚠️ ${msg}` });
+    }
   }
+
+  // El cierre de turno saca de la sesión: aplicar al final, tras ejecutar todo.
+  if (loggedOut) await clearSession();
+
+  return NextResponse.json({
+    ok: results.every((r) => r.ok),
+    results,
+    reply: results.map((r) => r.reply).join("\n"),
+    loggedOut,
+  });
 }

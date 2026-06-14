@@ -29,6 +29,102 @@ export type Database = {
   }
   public: {
     Tables: {
+      activity_events: {
+        Row: {
+          category: string
+          code: string
+          label: string
+          sort_order: number
+        }
+        Insert: {
+          category: string
+          code: string
+          label: string
+          sort_order?: number
+        }
+        Update: {
+          category?: string
+          code?: string
+          label?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      activity_log: {
+        Row: {
+          actor_name: string | null
+          created_at: string
+          description: string
+          event_code: string
+          id: string
+          metadata: Json | null
+          restaurant_id: string
+          shift_session_id: string | null
+          source: string
+          user_id: string | null
+        }
+        Insert: {
+          actor_name?: string | null
+          created_at?: string
+          description: string
+          event_code: string
+          id?: string
+          metadata?: Json | null
+          restaurant_id: string
+          shift_session_id?: string | null
+          source?: string
+          user_id?: string | null
+        }
+        Update: {
+          actor_name?: string | null
+          created_at?: string
+          description?: string
+          event_code?: string
+          id?: string
+          metadata?: Json | null
+          restaurant_id?: string
+          shift_session_id?: string | null
+          source?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_event_code_fkey"
+            columns: ["event_code"]
+            isOneToOne: false
+            referencedRelation: "activity_events"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "activity_log_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "shift_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "v_caja_turno"
+            referencedColumns: ["shift_session_id"]
+          },
+          {
+            foreignKeyName: "activity_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_log: {
         Row: {
           action: string
@@ -1472,6 +1568,16 @@ export type Database = {
         }
         Returns: string
       }
+      bitacora_listar: {
+        Args: {
+          p_category?: string
+          p_event?: string
+          p_from: string
+          p_restaurant: string
+          p_to: string
+        }
+        Returns: Json
+      }
       cerrar_dia: {
         Args: {
           p_closed_by?: string
@@ -1514,6 +1620,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      consumir_insumo: {
+        Args: {
+          p_date: string
+          p_ingredient_id: string
+          p_qty: number
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
       }
       conteo_estado: {
         Args: { p_date: string; p_restaurant: string }
@@ -1563,6 +1680,7 @@ export type Database = {
         }
         Returns: Json
       }
+      purgar_bitacora: { Args: { p_days?: number }; Returns: number }
       registrar_compra: {
         Args: {
           p_date: string

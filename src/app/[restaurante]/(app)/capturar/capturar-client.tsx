@@ -29,7 +29,7 @@ export default function CapturarClient({
   const [status, setStatus] = useState<Status>("idle");
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [pending, setPending] = useState<PendingAction[]>([]);
   const [confirmaciones, setConfirmaciones] = useState<Confirmacion[]>([]);
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
@@ -56,7 +56,7 @@ export default function CapturarClient({
       const r: string = data.reply ?? data.error ?? "";
       setTranscript(t);
       setReply(r);
-      setPending(data.action ?? null);
+      setPending(data.actions ?? []);
       convo.current = [
         ...convo.current,
         ...(t ? [{ role: "user" as const, text: t }] : []),
@@ -107,18 +107,20 @@ export default function CapturarClient({
   }
 
   async function confirm() {
-    if (!pending) return;
+    if (pending.length === 0) return;
     setStatus("processing");
     try {
       const res = await fetch("/api/commit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(pending),
+        body: JSON.stringify({ actions: pending }),
       });
       const data = await res.json();
-      pushConfirm(data.reply ?? "Listo", !!data.ok);
+      const results: { ok: boolean; reply: string }[] =
+        data.results ?? [{ ok: !!data.ok, reply: data.reply ?? "Listo" }];
+      for (const r of results) pushConfirm(r.reply ?? "Listo", !!r.ok);
       convo.current = [...convo.current, { role: "model" as const, text: data.reply ?? "" }].slice(-12);
-      setPending(null);
+      setPending([]);
       setReply("");
       setTranscript("");
       if (data.loggedOut) router.push(`/${slug}/turno-cerrado`);
@@ -132,8 +134,10 @@ export default function CapturarClient({
       ? `Escuchando${shiftName ? ` turno ${shiftName}` : ""}…`
       : status === "processing"
         ? "Procesando…"
-        : pending
-          ? "¿Confirmas?"
+        : pending.length > 0
+          ? pending.length > 1
+            ? `¿Confirmas las ${pending.length} acciones?`
+            : "¿Confirmas?"
           : "Mantén el botón y habla";
 
   return (
@@ -168,15 +172,15 @@ export default function CapturarClient({
           <p className="mt-2 max-w-sm text-center text-white/50">“{transcript}”</p>
         )}
 
-        {pending ? (
+        {pending.length > 0 ? (
           <div className="float-in mt-1 w-full max-w-sm rounded-3xl bg-white/10 p-4 text-center">
-            <p className="text-base">{reply}</p>
+            <p className="whitespace-pre-line text-left text-base">{reply}</p>
             <div className="mt-3 flex gap-2">
               <button onClick={confirm} className="flex-1 rounded-full bg-white py-3 font-semibold text-ink">
-                Confirmar
+                {pending.length > 1 ? "Confirmar todo" : "Confirmar"}
               </button>
               <button
-                onClick={() => { setPending(null); setReply(""); }}
+                onClick={() => { setPending([]); setReply(""); }}
                 className="rounded-full border border-white/30 px-5 py-3 font-semibold"
               >
                 No

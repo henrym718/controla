@@ -130,21 +130,19 @@ merma % y el costo/plato vs la banda histórica.
 ## 8. Qué YA funciona vs qué FALTA construir
 
 **Ya funciona:**
-- Inventario contable con stock que se acarrea y **costo exacto** (`last_unit_cost`).
+- Inventario contable con stock que se acarrea y **costo PROMEDIO ponderado** (`last_unit_cost`):
+  al recomprar a otro precio, el costo se promedia (no se pisa).
 - **Tanda con rinde** (`production_batches.units_produced`) → costo por unidad exacto.
+- **Procesar** (`procesar_insumo`): consume el crudo del stock y hereda su costo (pollo→presas,
+  verde→tortillas) — un solo flujo, sin teclear el costo.
+- **Consumir del día** (`consumir_insumo`): "consumimos 4 tomates" → baja stock y suma al costo
+  del día, sin nombrar resultado.
 - **Granel + prorrateo** al cierre (`cerrar_dia`, `granel_close.cost_per_plate`) + merma %.
-- Compra, retiro (con motivo), merma de insumo, y **ajuste físico manual con PIN** (sale en
-  Analítica como "desfase de inventario").
+- **Conteo de cierre** (`/conteo`): esperado vs contado por insumo → faltante de unidades en $.
+- Compra, retiro (con motivo), merma de insumo, y **ajuste físico manual con PIN**.
 
-**Falta (próximo código, en este orden de valor):**
-1. **"Procesar"** que **consuma stock crudo** y produzca el procesado, **valorando el costo
-   desde lo consumido** (hoy `registrar_produccion` pide el costo a mano y no descuenta el
-   crudo; para el pollo toca hacer retiro + producción por separado). Esto resuelve pollo,
-   carne y verde→tortilla con **un solo flujo** y menos errores.
-2. **Conteo de cierre estructurado:** la tabla `inventory_counts` ya **existe pero está sin
-   usar**. Cablearla = esperado vs contado por insumo contable → el **descuadre de unidades**
-   del §7.
-3. **Reporte de rinde + "platos disponibles vs vendidos"** para platos de insumo contable.
+**Falta (próximo código):**
+- **Reporte de rinde + "platos disponibles vs vendidos"** para platos de insumo contable.
 
 ---
 
