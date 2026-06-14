@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     tool?: string;
     args?: unknown;
     actions?: { tool: string; args: unknown }[];
+    pin?: string;
   };
   // Acepta una sola acción {tool,args} o varias {actions:[...]}.
   const actions =
@@ -29,7 +30,8 @@ export async function POST(req: Request) {
   }
 
   const db = createAdminClient();
-  const ctx: ToolCtx = { db, session };
+  // El PIN (si lo hay) viaja en el contexto para las acciones sensibles (anular).
+  const ctx: ToolCtx = { db, session, pin: body.pin };
 
   const results: { ok: boolean; reply: string }[] = [];
   let loggedOut = false;

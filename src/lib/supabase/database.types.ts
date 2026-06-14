@@ -58,6 +58,7 @@ export type Database = {
           event_code: string
           id: string
           metadata: Json | null
+          op_id: string | null
           restaurant_id: string
           shift_session_id: string | null
           source: string
@@ -70,6 +71,7 @@ export type Database = {
           event_code: string
           id?: string
           metadata?: Json | null
+          op_id?: string | null
           restaurant_id: string
           shift_session_id?: string | null
           source?: string
@@ -82,6 +84,7 @@ export type Database = {
           event_code?: string
           id?: string
           metadata?: Json | null
+          op_id?: string | null
           restaurant_id?: string
           shift_session_id?: string | null
           source?: string
@@ -219,31 +222,43 @@ export type Database = {
           amount: number
           created_at: string
           id: string
+          op_id: string | null
           reason: string | null
           restaurant_id: string
           shift_session_id: string
           type: string
           user_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount: number
           created_at?: string
           id?: string
+          op_id?: string | null
           reason?: string | null
           restaurant_id: string
           shift_session_id: string
           type: string
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount?: number
           created_at?: string
           id?: string
+          op_id?: string | null
           reason?: string | null
           restaurant_id?: string
           shift_session_id?: string
           type?: string
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -270,6 +285,13 @@ export type Database = {
           {
             foreignKeyName: "cash_movements_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_movements_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -542,12 +564,16 @@ export type Database = {
           created_at: string
           id: string
           note: string | null
+          op_id: string | null
           paid_from_cash: boolean
           recurring_cost_id: string | null
           restaurant_id: string
           shift_session_id: string | null
           source: string
           user_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount: number
@@ -556,12 +582,16 @@ export type Database = {
           created_at?: string
           id?: string
           note?: string | null
+          op_id?: string | null
           paid_from_cash?: boolean
           recurring_cost_id?: string | null
           restaurant_id: string
           shift_session_id?: string | null
           source?: string
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount?: number
@@ -570,12 +600,16 @@ export type Database = {
           created_at?: string
           id?: string
           note?: string | null
+          op_id?: string | null
           paid_from_cash?: boolean
           recurring_cost_id?: string | null
           restaurant_id?: string
           shift_session_id?: string | null
           source?: string
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -602,6 +636,13 @@ export type Database = {
           {
             foreignKeyName: "expenses_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "expenses_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -798,6 +839,7 @@ export type Database = {
           created_at: string
           id: string
           ingredient_id: string
+          op_id: string | null
           qty: number
           reason: string | null
           ref_id: string | null
@@ -808,12 +850,16 @@ export type Database = {
           type: string
           unit_cost: number
           user_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           business_date?: string
           created_at?: string
           id?: string
           ingredient_id: string
+          op_id?: string | null
           qty: number
           reason?: string | null
           ref_id?: string | null
@@ -824,12 +870,16 @@ export type Database = {
           type: string
           unit_cost?: number
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           business_date?: string
           created_at?: string
           id?: string
           ingredient_id?: string
+          op_id?: string | null
           qty?: number
           reason?: string | null
           ref_id?: string | null
@@ -840,6 +890,9 @@ export type Database = {
           type?: string
           unit_cost?: number
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -880,6 +933,13 @@ export type Database = {
           {
             foreignKeyName: "inventory_movements_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_movements_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1088,6 +1148,7 @@ export type Database = {
           id: string
           ingredient_id: string | null
           item_kind: string
+          op_id: string | null
           payment_method: string
           qty: number
           restaurant_id: string
@@ -1096,6 +1157,9 @@ export type Database = {
           total: number
           unit_price: number
           user_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           business_date?: string
@@ -1105,6 +1169,7 @@ export type Database = {
           id?: string
           ingredient_id?: string | null
           item_kind?: string
+          op_id?: string | null
           payment_method?: string
           qty?: number
           restaurant_id: string
@@ -1113,6 +1178,9 @@ export type Database = {
           total?: number
           unit_price?: number
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           business_date?: string
@@ -1122,6 +1190,7 @@ export type Database = {
           id?: string
           ingredient_id?: string | null
           item_kind?: string
+          op_id?: string | null
           payment_method?: string
           qty?: number
           restaurant_id?: string
@@ -1130,6 +1199,9 @@ export type Database = {
           total?: number
           unit_price?: number
           user_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -1177,6 +1249,13 @@ export type Database = {
           {
             foreignKeyName: "sales_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1558,6 +1637,15 @@ export type Database = {
         Args: { p_pin: string; p_user: string }
         Returns: undefined
       }
+      anular_operacion: {
+        Args: {
+          p_by: string
+          p_op_id: string
+          p_reason: string
+          p_restaurant: string
+        }
+        Returns: Json
+      }
       auth_estado: { Args: { p_key: string }; Returns: string }
       auth_intento: {
         Args: {
@@ -1649,6 +1737,26 @@ export type Database = {
         Args: { p_date: string; p_restaurant: string }
         Returns: Json
       }
+      editar_producto: {
+        Args: {
+          p_adjust_kind?: string
+          p_date: string
+          p_ingredient_id: string
+          p_name: string
+          p_new_qty?: number
+          p_reason?: string
+          p_restaurant: string
+          p_sale_price?: number
+          p_session: string
+          p_unit_cost: number
+          p_user: string
+        }
+        Returns: Json
+      }
+      eliminar_producto: {
+        Args: { p_ingredient_id: string; p_restaurant: string }
+        Returns: Json
+      }
       fijar_menu: {
         Args: {
           p_date: string
@@ -1666,6 +1774,10 @@ export type Database = {
           name: string
           role: string
         }[]
+      }
+      operaciones_reversibles: {
+        Args: { p_from: string; p_restaurant: string; p_to: string }
+        Returns: Json
       }
       procesar_insumo: {
         Args: {

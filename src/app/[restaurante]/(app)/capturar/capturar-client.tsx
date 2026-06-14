@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 interface PendingAction {
   tool: string;
   args: Record<string, unknown>;
+  requiresPin?: boolean;
 }
 interface Turn {
   role: "user" | "model";
@@ -30,9 +31,12 @@ export default function CapturarClient({
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
   const [pending, setPending] = useState<PendingAction[]>([]);
+  const [pin, setPin] = useState("");
   const [confirmaciones, setConfirmaciones] = useState<Confirmacion[]>([]);
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
+
+  const needsPin = pending.some((p) => p.requiresPin);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -108,12 +112,13 @@ export default function CapturarClient({
 
   async function confirm() {
     if (pending.length === 0) return;
+    if (needsPin && pin.trim().length < 4) return;
     setStatus("processing");
     try {
       const res = await fetch("/api/commit", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ actions: pending }),
+        body: JSON.stringify({ actions: pending, pin: needsPin ? pin.trim() : undefined }),
       });
       const data = await res.json();
       const results: { ok: boolean; reply: string }[] =
@@ -121,6 +126,7 @@ export default function CapturarClient({
       for (const r of results) pushConfirm(r.reply ?? "Listo", !!r.ok);
       convo.current = [...convo.current, { role: "model" as const, text: data.reply ?? "" }].slice(-12);
       setPending([]);
+      setPin("");
       setReply("");
       setTranscript("");
       if (data.loggedOut) router.push(`/${slug}/turno-cerrado`);
@@ -175,12 +181,26 @@ export default function CapturarClient({
         {pending.length > 0 ? (
           <div className="float-in mt-1 w-full max-w-sm rounded-3xl bg-white/10 p-4 text-center">
             <p className="whitespace-pre-line text-left text-base">{reply}</p>
+            {needsPin && (
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="Tu PIN (para anular)"
+                className="mt-3 w-full rounded-full bg-white/10 px-4 py-3 text-center text-sm text-white outline-none placeholder:text-white/40"
+              />
+            )}
             <div className="mt-3 flex gap-2">
-              <button onClick={confirm} className="flex-1 rounded-full bg-white py-3 font-semibold text-ink">
+              <button
+                onClick={confirm}
+                disabled={needsPin && pin.trim().length < 4}
+                className="flex-1 rounded-full bg-white py-3 font-semibold text-ink disabled:opacity-50"
+              >
                 {pending.length > 1 ? "Confirmar todo" : "Confirmar"}
               </button>
               <button
-                onClick={() => { setPending([]); setReply(""); }}
+                onClick={() => { setPending([]); setPin(""); setReply(""); }}
                 className="rounded-full border border-white/30 px-5 py-3 font-semibold"
               >
                 No

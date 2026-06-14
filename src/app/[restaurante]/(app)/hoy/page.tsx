@@ -24,7 +24,8 @@ export default async function HoyPage({
     db
       .from("sales")
       .select("total")
-      .eq("shift_session_id", session.shift_session_id),
+      .eq("shift_session_id", session.shift_session_id)
+      .is("voided_at", null),
     db
       .from("daily_menu")
       .select("price,available,dishes(name)")
@@ -102,6 +103,19 @@ export default async function HoyPage({
       <LinkButton href={`/${restaurante}/cierre-turno`} variant="outline">
         Cerrar turno y cuadrar caja
       </LinkButton>
+
+      <Link
+        href={`/${restaurante}/reversar`}
+        className="rounded-3xl border border-ink/10 p-4 text-sm font-semibold"
+      >
+        <div className="flex items-center justify-between">
+          <span>Anular algo registrado por error</span>
+          <span className="text-xs font-semibold text-coral">Reversar</span>
+        </div>
+        <p className="mt-1 text-xs font-normal opacity-50">
+          Una venta, compra, gasto o caja. Pide tu PIN.
+        </p>
+      </Link>
 
       <Link
         href={`/${restaurante}/cambiar-turno`}

@@ -24,6 +24,7 @@ const CATS: { code: string; label: string }[] = [
   { code: "inventario", label: "Inventario" },
   { code: "menu", label: "Menú" },
   { code: "cierre", label: "Cierres" },
+  { code: "reversa", label: "Reversa" },
   { code: "config", label: "Configuración" },
 ];
 
@@ -35,6 +36,7 @@ const CAT_TONE: Record<string, string> = {
   inventario: "bg-mint",
   menu: "bg-lav",
   cierre: "bg-peach",
+  reversa: "bg-coral/15",
   config: "bg-sand",
 };
 

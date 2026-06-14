@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button, Card, Field, Input, PageTitle } from "@/components/ui";
-import { crearTurno, eliminarTurno } from "../admin/actions";
+import { actualizarTurno, crearTurno, eliminarTurno } from "../admin/actions";
 
 interface Shift {
   id: string;
@@ -65,27 +65,88 @@ export default function TurnosClient({ shifts }: { shifts: Shift[] }) {
 
       <div className="flex flex-col gap-2">
         {shifts.map((s) => (
-          <Card key={s.id} className={s.active ? "" : "opacity-50"}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-semibold">{s.name}</p>
-                <p className="text-xs opacity-60">
-                  {s.start.slice(0, 5)}–{s.end.slice(0, 5)}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  if (window.confirm(`¿Eliminar turno ${s.name}?`))
-                    startTr(() => void eliminarTurno(s.id));
-                }}
-                className="rounded-full bg-coral/10 px-4 py-2 text-sm font-semibold text-coral"
-              >
-                Eliminar
-              </button>
-            </div>
-          </Card>
+          <TurnoCard key={s.id} shift={s} />
         ))}
       </div>
     </div>
+  );
+}
+
+function TurnoCard({ shift }: { shift: Shift }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(shift.name);
+  const [start, setStart] = useState(shift.start.slice(0, 5));
+  const [end, setEnd] = useState(shift.end.slice(0, 5));
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pending, startTr] = useTransition();
+
+  const guardar = () => {
+    setMsg(null);
+    if (!name.trim() || !start || !end) return setMsg("Completa nombre, inicio y fin.");
+    startTr(async () => {
+      const r = await actualizarTurno(shift.id, { name: name.trim(), start, end });
+      if (r.error) setMsg(r.error);
+      else setEditing(false);
+    });
+  };
+
+  if (editing) {
+    return (
+      <Card className="flex flex-col gap-3 bg-lav">
+        <Field label="Nombre">
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Inicio">
+            <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+          </Field>
+          <Field label="Fin">
+            <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+          </Field>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={guardar} disabled={pending} className="flex-1">
+            {pending ? "Guardando…" : "Guardar"}
+          </Button>
+          <button
+            onClick={() => setEditing(false)}
+            className="rounded-full border border-ink/15 px-5 py-2 text-sm font-semibold"
+          >
+            Cancelar
+          </button>
+        </div>
+        {msg && <p className="text-center text-sm text-coral">{msg}</p>}
+      </Card>
+    );
+  }
+
+  return (
+    <Card className={shift.active ? "" : "opacity-50"}>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-semibold">{shift.name}</p>
+          <p className="text-xs opacity-60">
+            {shift.start.slice(0, 5)}–{shift.end.slice(0, 5)}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditing(true)}
+            className="rounded-full bg-ink/10 px-4 py-2 text-sm font-semibold"
+          >
+            Editar
+          </button>
+          <button
+            onClick={() => {
+              if (window.confirm(`¿Eliminar turno ${shift.name}?`))
+                startTr(() => void eliminarTurno(shift.id));
+            }}
+            className="rounded-full bg-coral/10 px-4 py-2 text-sm font-semibold text-coral"
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </Card>
   );
 }

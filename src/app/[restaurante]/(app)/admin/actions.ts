@@ -508,6 +508,141 @@ export async function procesarInsumoAction(input: {
   return { ok: true };
 }
 
+/** Valida el PIN de administradora con login_pin. Devuelve true si es admin. */
+async function esPinAdmin(db: AdminDb, restaurantId: string, pin: string): Promise<boolean> {
+  const { data } = await db.rpc("login_pin", { p_restaurant: restaurantId, p_pin: pin });
+  const u = (data as { role?: string }[] | null)?.[0];
+  return !!u && u.role === "admin";
+}
+
+// ---------------------------------------------------------------- Editar producto del inventario (con PIN)
+export async function editarProductoInventario(input: {
+  ingredientId: string;
+  name: string;
+  unitCost: number;
+  salePrice?: number | null;
+  newQty?: number | null;
+  adjustKind?: "correccion" | "ajuste";
+  reason?: string | null;
+  pin: string;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!input.name.trim()) return { error: "El nombre no puede quedar vacío." };
+  if (!(await esPinAdmin(db, session.restaurant_id, input.pin))) {
+    return { error: "PIN de administradora inválido." };
+  }
+  if (input.newQty != null && !(input.reason ?? "").trim()) {
+    return { error: "Indica el motivo del ajuste de stock." };
+  }
+
+  const { data, error } = await db.rpc("editar_producto", {
+    p_restaurant: session.restaurant_id,
+    p_session: session.shift_session_id,
+    p_user: session.user_id,
+    p_date: businessDate(),
+    p_ingredient_id: input.ingredientId,
+    p_name: input.name.trim(),
+    p_unit_cost: input.unitCost,
+    p_sale_price: input.salePrice ?? undefined,
+    p_new_qty: input.newQty ?? undefined,
+    p_adjust_kind: input.adjustKind ?? "correccion",
+    p_reason: input.reason ?? undefined,
+  });
+  if (error) return { error: error.message };
+
+  const d = data as {
+    new_name?: string;
+    new_cost?: number;
+    stock_diff?: number;
+    adjust_kind?: string;
+  } | null;
+  const partes = [`Editó ${d?.new_name ?? input.name.trim()}`];
+  if (d?.new_cost != null) partes.push(`costo ${money(Number(d.new_cost))}`);
+  if (input.salePrice != null) partes.push(`precio ${money(input.salePrice)}`);
+  if (d?.stock_diff && Math.abs(Number(d.stock_diff)) > 0) {
+    const diff = Number(d.stock_diff);
+    partes.push(
+      `stock ${diff >= 0 ? "+" : ""}${diff} (${d.adjust_kind === "ajuste" ? "conteo físico" : "corrección"})`,
+    );
+  }
+  await logAdmin(session, db, "producto_editado", partes.join(", "), {
+    ingredient: d?.new_name ?? input.name.trim(),
+  });
+  revalidatePath(`/${session.slug}/inventario`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- Eliminar producto del inventario (con PIN)
+export async function eliminarProductoInventario(input: {
+  ingredientId: string;
+  pin: string;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!(await esPinAdmin(db, session.restaurant_id, input.pin))) {
+    return { error: "PIN de administradora inválido." };
+  }
+  const nombre = await nombreDe(db, "ingredients", input.ingredientId);
+  const { data, error } = await db.rpc("eliminar_producto", {
+    p_restaurant: session.restaurant_id,
+    p_ingredient_id: input.ingredientId,
+  });
+  if (error) return { error: error.message };
+  const d = data as { deleted?: boolean; deactivated?: boolean } | null;
+  await logAdmin(
+    session,
+    db,
+    "producto_baja",
+    d?.deleted ? `Eliminó ${nombre} del inventario` : `Desactivó ${nombre} (tiene historial)`,
+    { ingredient: nombre, deleted: !!d?.deleted },
+  );
+  revalidatePath(`/${session.slug}/inventario`);
+  return d?.deleted ? { ok: true } : { error: "Tenía historial; se desactivó en lugar de borrar." };
+}
+
+// ---------------------------------------------------------------- Anular / reversar una operación (con PIN)
+//  Lo puede hacer CUALQUIER usuario del turno (admin o empleada): son quienes
+//  registran las ventas/compras/gastos y quienes deben poder revertir una
+//  devolución o un error. Basta un PIN válido del restaurante; el reverso queda
+//  firmado en la bitácora con el nombre de quien lo hizo.
+export async function anularOperacion(input: {
+  opId: string;
+  reason: string;
+  pin: string;
+}): Promise<ActionResult> {
+  const session = await getSession();
+  if (!session) return { error: "No autorizado." };
+  const db = createAdminClient();
+  if (!input.reason.trim()) return { error: "El motivo es obligatorio." };
+
+  const { data } = await db.rpc("login_pin", {
+    p_restaurant: session.restaurant_id,
+    p_pin: input.pin,
+  });
+  const actor = (data as { id: string; name: string; role: string }[] | null)?.[0];
+  if (!actor) return { error: "PIN inválido." };
+
+  const { error } = await db.rpc("anular_operacion", {
+    p_restaurant: session.restaurant_id,
+    p_op_id: input.opId,
+    p_reason: input.reason.trim(),
+    p_by: actor.id,
+  });
+  if (error) return { error: error.message };
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: actor.id,
+    actorName: actor.name,
+    shiftSessionId: session.shift_session_id,
+    source: "manual",
+    event: "anulacion",
+    description: `Anuló una operación — ${input.reason.trim()}`,
+    metadata: { op_id: input.opId, role: actor.role },
+    opId: input.opId,
+  });
+  revalidatePath(`/${session.slug}/reversar`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- Ajuste de inventario (auditado)
 export async function ajustarInventario(input: {
   ingredientId: string;
