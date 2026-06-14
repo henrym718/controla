@@ -6,7 +6,8 @@ export interface AgentTurn {
 }
 
 export interface AgentDecision {
-  functionCall?: { name: string; args: Record<string, unknown> };
+  /** Puede traer VARIAS llamadas si la usuaria dictó varias acciones en un mensaje. */
+  functionCalls?: { name: string; args: Record<string, unknown> }[];
   text?: string;
 }
 
@@ -17,9 +18,8 @@ interface GeminiPart {
 
 function modelCandidates(): string[] {
   const configured = process.env.GEMINI_MODEL?.trim();
-  const fallbacks = ["gemini-2.5-flash", "gemini-2.0-flash"];
   // el configurado primero, luego respaldos (sin duplicar)
-  return [...new Set([configured, ...fallbacks].filter(Boolean))] as string[];
+  return [...new Set([configured].filter(Boolean))] as string[];
 }
 
 export async function runAgent(opts: {
@@ -60,13 +60,11 @@ export async function runAgent(opts: {
       candidates?: { content?: { parts?: GeminiPart[] } }[];
     };
     const parts = data.candidates?.[0]?.content?.parts ?? [];
-    for (const p of parts) {
-      if (p.functionCall) {
-        return {
-          functionCall: { name: p.functionCall.name, args: p.functionCall.args ?? {} },
-        };
-      }
-    }
+    const calls = parts
+      .filter((p) => p.functionCall)
+      .map((p) => ({ name: p.functionCall!.name, args: p.functionCall!.args ?? {} }));
+    if (calls.length) return { functionCalls: calls };
+
     const text = parts.map((p) => p.text).filter(Boolean).join("\n").trim();
     return { text: text || "No entendí, ¿me lo repites?" };
   }

@@ -6,7 +6,10 @@ import { setSession, clearSession, getSession } from "@/lib/auth/session";
 import { isShiftOpenNow, businessDate } from "@/lib/shifts";
 import { clientIp, minutesLeft } from "@/lib/throttle";
 import { computeDayReport } from "@/lib/reports";
+import { logActivity } from "@/lib/activity";
 import type { Json } from "@/lib/supabase/database.types";
+
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 export interface LoginResult {
   error?: string;
@@ -83,6 +86,7 @@ export async function loginAction(
     .maybeSingle();
 
   let sessionId = existing?.id;
+  const abrioTurno = !sessionId; // abrió el turno (no se unió a uno ya abierto)
   if (!sessionId) {
     // Abrir un turno NUEVO exige declarar la caja explícitamente (aunque sea 0).
     if (openingCash == null) {
@@ -118,11 +122,35 @@ export async function loginAction(
     shift_session_id: sessionId,
   });
 
+  await logActivity(db, {
+    restaurantId: rest.id,
+    userId: user.id,
+    actorName: user.name,
+    shiftSessionId: sessionId,
+    source: "manual",
+    event: "login",
+    description: abrioTurno
+      ? `${user.name} abrió el turno ${shift.name}${openingCash != null ? ` (caja inicial ${money(openingCash)})` : ""}`
+      : `${user.name} entró al turno ${shift.name}`,
+    metadata: { shift: shift.name, abrio: abrioTurno },
+  });
+
   redirect(`/${slug}/hoy`);
 }
 
 export async function logoutAction(): Promise<void> {
   const session = await getSession();
+  if (session) {
+    await logActivity(createAdminClient(), {
+      restaurantId: session.restaurant_id,
+      userId: session.user_id,
+      actorName: session.user_name,
+      shiftSessionId: session.shift_session_id,
+      source: "manual",
+      event: "logout",
+      description: `${session.user_name} cerró sesión`,
+    });
+  }
   await clearSession();
   redirect(`/${session?.slug ?? ""}`);
 }
@@ -214,6 +242,17 @@ export async function cambiarTurnoAction(
     shift_session_id: sessionId,
   });
 
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: sessionId,
+    source: "manual",
+    event: "cambio_turno",
+    description: `${session.user_name} cambió al turno ${shift.name}`,
+    metadata: { shift: shift.name },
+  });
+
   redirect(`/${session.slug}/hoy`);
 }
 
@@ -274,6 +313,18 @@ export async function cerrarTurnoAction(
   const dif = Number(data?.cash_discrepancy ?? 0);
   const fl = Number(data?.closing_float ?? 0);
   const dep = Number(data?.deposit_amount ?? 0);
+
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: session.shift_session_id,
+    source: "manual",
+    event: "cerrar_turno",
+    description: `${session.user_name} cerró el turno. Esperado ${money(exp)}, contado ${money(countedCash)}, descuadre ${money(dif)}`,
+    metadata: { expected: exp, counted: countedCash, discrepancy: dif, deposit: dep },
+  });
+
   redirect(
     `/${session.slug}/turno-cerrado?exp=${exp}&cnt=${countedCash}&dif=${dif}&fl=${fl}&dep=${dep}`,
   );
@@ -293,6 +344,17 @@ export async function cerrarDiaAction(
     p_date: date,
     p_merma: merma as unknown as Json,
     p_closed_by: session.user_id,
+  });
+
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: session.shift_session_id,
+    source: "manual",
+    event: "cerrar_dia",
+    description: `${session.user_name} cerró el día (${date})`,
+    metadata: { date },
   });
 
   // Guardar el costo real (prorrateado) de cada plato del día → historial.

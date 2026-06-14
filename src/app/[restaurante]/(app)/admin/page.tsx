@@ -25,6 +25,7 @@ export default async function AdminPage({
     { href: `${base}/cierre-dia`, label: "Cerrar el día", tone: "bg-peach" },
     { href: `${base}/usuarios`, label: "Usuarios y PINs", tone: "bg-sand" },
     { href: `${base}/turnos`, label: "Turnos", tone: "bg-lav" },
+    { href: `${base}/bitacora`, label: "Bitácora", tone: "bg-ink/5" },
   ];
 
   return (

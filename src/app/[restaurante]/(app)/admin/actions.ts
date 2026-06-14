@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSession } from "@/lib/auth/session";
 import { businessDate } from "@/lib/shifts";
+import { logActivity, type EventCode } from "@/lib/activity";
+import type { SessionClaims } from "@/lib/auth/jwt";
 import type { Json } from "@/lib/supabase/database.types";
 
 export interface ActionResult {
@@ -11,12 +13,46 @@ export interface ActionResult {
   ok?: boolean;
 }
 
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
+
 async function admin() {
   const session = await getSession();
   if (!session || session.user_role !== "admin") {
     throw new Error("No autorizado");
   }
   return { session, db: createAdminClient() };
+}
+
+type AdminDb = ReturnType<typeof createAdminClient>;
+
+/** Registra una acción manual de administración en la bitácora. */
+async function logAdmin(
+  session: SessionClaims,
+  db: AdminDb,
+  event: EventCode,
+  description: string,
+  metadata?: Record<string, unknown>,
+) {
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: session.shift_session_id,
+    source: "manual",
+    event,
+    description,
+    metadata,
+  });
+}
+
+/** Nombre de una fila por id (para descripciones coherentes cuando solo hay id). */
+async function nombreDe(
+  db: AdminDb,
+  table: "users" | "shifts" | "dishes" | "recurring_costs" | "ingredients",
+  id: string,
+): Promise<string> {
+  const { data } = await db.from(table).select("name").eq("id", id).maybeSingle();
+  return (data as { name?: string } | null)?.name ?? "—";
 }
 
 // ---------------------------------------------------------------- Usuarios
@@ -39,6 +75,13 @@ export async function crearUsuario(input: {
     p_end: input.end || undefined,
   });
   if (error) return { error: error.message };
+  await logAdmin(
+    session,
+    db,
+    "usuario",
+    `Creó el usuario ${input.name} (${input.role === "admin" ? "admin" : "empleado"})`,
+    { name: input.name, role: input.role },
+  );
   revalidatePath(`/${session.slug}/usuarios`);
   return { ok: true };
 }
@@ -50,6 +93,7 @@ export async function cambiarPin(
   const { session, db } = await admin();
   const { error } = await db.rpc("admin_set_pin", { p_user: userId, p_pin: pin });
   if (error) return { error: error.message };
+  await logAdmin(session, db, "usuario", `Cambió el PIN de ${await nombreDe(db, "users", userId)}`);
   revalidatePath(`/${session.slug}/usuarios`);
   return { ok: true };
 }
@@ -77,6 +121,7 @@ export async function actualizarUsuario(
     .eq("id", userId)
     .eq("restaurant_id", session.restaurant_id);
   if (error) return { error: error.message };
+  await logAdmin(session, db, "usuario", `Editó el usuario ${input.name}`, { name: input.name });
   revalidatePath(`/${session.slug}/usuarios`);
   return { ok: true };
 }
@@ -86,17 +131,25 @@ export async function toggleUsuario(
   active: boolean,
 ): Promise<ActionResult> {
   const { session, db } = await admin();
+  const nombre = await nombreDe(db, "users", userId);
   await db
     .from("users")
     .update({ active })
     .eq("id", userId)
     .eq("restaurant_id", session.restaurant_id);
+  await logAdmin(
+    session,
+    db,
+    "usuario",
+    `${active ? "Activó" : "Desactivó"} a ${nombre}`,
+  );
   revalidatePath(`/${session.slug}/usuarios`);
   return { ok: true };
 }
 
 export async function eliminarUsuario(userId: string): Promise<ActionResult> {
   const { session, db } = await admin();
+  const nombre = await nombreDe(db, "users", userId);
   const { error } = await db
     .from("users")
     .delete()
@@ -108,9 +161,11 @@ export async function eliminarUsuario(userId: string): Promise<ActionResult> {
       .update({ active: false })
       .eq("id", userId)
       .eq("restaurant_id", session.restaurant_id);
+    await logAdmin(session, db, "usuario", `Desactivó a ${nombre} (tiene historial)`);
     revalidatePath(`/${session.slug}/usuarios`);
     return { error: "Tiene historial; se desactivó en lugar de borrar." };
   }
+  await logAdmin(session, db, "usuario", `Eliminó a ${nombre}`);
   revalidatePath(`/${session.slug}/usuarios`);
   return { ok: true };
 }
@@ -130,6 +185,9 @@ export async function crearTurno(input: {
     sort_order: 99,
   });
   if (error) return { error: error.message };
+  await logAdmin(session, db, "turno_config", `Creó el turno ${input.name} (${input.start}–${input.end})`, {
+    name: input.name,
+  });
   revalidatePath(`/${session.slug}/turnos`);
   return { ok: true };
 }
@@ -145,12 +203,14 @@ export async function actualizarTurno(
     .eq("id", id)
     .eq("restaurant_id", session.restaurant_id);
   if (error) return { error: error.message };
+  await logAdmin(session, db, "turno_config", `Editó el turno ${input.name}`, { name: input.name });
   revalidatePath(`/${session.slug}/turnos`);
   return { ok: true };
 }
 
 export async function eliminarTurno(id: string): Promise<ActionResult> {
   const { session, db } = await admin();
+  const nombre = await nombreDe(db, "shifts", id);
   const { error } = await db
     .from("shifts")
     .delete()
@@ -162,9 +222,11 @@ export async function eliminarTurno(id: string): Promise<ActionResult> {
       .update({ active: false })
       .eq("id", id)
       .eq("restaurant_id", session.restaurant_id);
+    await logAdmin(session, db, "turno_config", `Desactivó el turno ${nombre} (tiene historial)`);
     revalidatePath(`/${session.slug}/turnos`);
     return { error: "Tiene historial; se desactivó en lugar de borrar." };
   }
+  await logAdmin(session, db, "turno_config", `Eliminó el turno ${nombre}`);
   revalidatePath(`/${session.slug}/turnos`);
   return { ok: true };
 }
@@ -187,17 +249,26 @@ export async function crearCosto(input: {
     day_of_month: input.dayOfMonth || null,
   });
   if (error) return { error: error.message };
+  await logAdmin(
+    session,
+    db,
+    "costo_fijo",
+    `Agregó el costo fijo ${input.name} (${money(input.amount)})`,
+    { name: input.name, amount: input.amount },
+  );
   revalidatePath(`/${session.slug}/costos-fijos`);
   return { ok: true };
 }
 
 export async function eliminarCosto(id: string): Promise<ActionResult> {
   const { session, db } = await admin();
+  const nombre = await nombreDe(db, "recurring_costs", id);
   await db
     .from("recurring_costs")
     .delete()
     .eq("id", id)
     .eq("restaurant_id", session.restaurant_id);
+  await logAdmin(session, db, "costo_fijo", `Eliminó el costo fijo ${nombre}`);
   revalidatePath(`/${session.slug}/costos-fijos`);
   return { ok: true };
 }
@@ -214,6 +285,10 @@ export async function crearPlato(input: {
     price: input.price,
   });
   if (error) return { error: error.message };
+  await logAdmin(session, db, "plato_config", `Creó el plato ${input.name} (${money(input.price)})`, {
+    name: input.name,
+    price: input.price,
+  });
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
 }
@@ -229,12 +304,20 @@ export async function actualizarPlato(
     .eq("id", id)
     .eq("restaurant_id", session.restaurant_id);
   if (error) return { error: error.message };
+  await logAdmin(
+    session,
+    db,
+    "plato_config",
+    `Editó el plato ${input.name} (${money(input.price)}${input.active ? "" : ", inactivo"})`,
+    { name: input.name, price: input.price, active: input.active },
+  );
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
 }
 
 export async function eliminarPlato(id: string): Promise<ActionResult> {
   const { session, db } = await admin();
+  const nombre = await nombreDe(db, "dishes", id);
   const { error } = await db
     .from("dishes")
     .delete()
@@ -246,9 +329,11 @@ export async function eliminarPlato(id: string): Promise<ActionResult> {
       .update({ active: false })
       .eq("id", id)
       .eq("restaurant_id", session.restaurant_id);
+    await logAdmin(session, db, "plato_config", `Desactivó el plato ${nombre} (tiene historial)`);
     revalidatePath(`/${session.slug}/catalogo`);
     return { error: "Tiene historial; se desactivó en lugar de borrar." };
   }
+  await logAdmin(session, db, "plato_config", `Eliminó el plato ${nombre}`);
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
 }
@@ -314,6 +399,14 @@ export async function agregarProductoInventario(input: {
     unit_cost: unit,
   });
 
+  await logAdmin(
+    session,
+    db,
+    "producto_nuevo",
+    `Agregó ${input.qty} × ${input.name.trim()} al inventario (${money(input.totalCost)})`,
+    { name: input.name.trim(), qty: input.qty, total_cost: input.totalCost },
+  );
+
   revalidatePath(`/${session.slug}/inventario`);
   return { ok: true };
 }
@@ -338,8 +431,16 @@ export async function registrarConteoAction(
   });
   if (error) return { error: error.message };
   const d = data as { faltante_cost?: number } | null;
+  const faltante = Number(d?.faltante_cost ?? 0);
+  await logAdmin(
+    session,
+    db,
+    "conteo",
+    `Registró el conteo de cierre (${counts.length} ítems${faltante > 0 ? `, faltante ${money(faltante)}` : ", cuadra"})`,
+    { items: counts.length, faltante },
+  );
   revalidatePath(`/${session.slug}/conteo`);
-  return { faltante: Number(d?.faltante_cost ?? 0) };
+  return { faltante };
 }
 
 // ---------------------------------------------------------------- Procesar insumo (crudo → procesado)
@@ -393,6 +494,16 @@ export async function procesarInsumoAction(input: {
     p_output_units: input.outputUnits ?? undefined,
   });
   if (error) return { error: error.message };
+  const inputName = await nombreDe(db, "ingredients", input.inputId);
+  await logAdmin(
+    session,
+    db,
+    "procesar",
+    input.outputUnits
+      ? `Procesó ${input.inputQty} × ${inputName} → ${input.outputUnits} × ${input.outputName.trim()}`
+      : `Procesó ${input.inputQty} × ${inputName} → ${input.outputName.trim()} (a granel)`,
+    { input: inputName, input_qty: input.inputQty, output: input.outputName.trim() },
+  );
   revalidatePath(`/${session.slug}/inventario`);
   return { ok: true };
 }
@@ -424,13 +535,14 @@ export async function ajustarInventario(input: {
       .maybeSingle(),
     db
       .from("ingredients")
-      .select("last_unit_cost")
+      .select("name,last_unit_cost")
       .eq("id", input.ingredientId)
       .maybeSingle(),
   ]);
   const current = Number(stock?.stock ?? 0);
   const diff = input.newQty - current;
   const unitCost = Number(ing?.last_unit_cost ?? 0);
+  const nombre = ing?.name ?? "un producto";
 
   await db.from("inventory_movements").insert({
     restaurant_id: session.restaurant_id,
@@ -453,6 +565,13 @@ export async function ajustarInventario(input: {
     payload: { from: current, to: input.newQty, diff } as Json,
     reason: input.reason,
   });
+  await logAdmin(
+    session,
+    db,
+    "ajuste_inventario",
+    `Ajustó ${nombre}: de ${current} a ${input.newQty} (${diff >= 0 ? "+" : ""}${diff}) — ${input.reason}`,
+    { ingredient: nombre, from: current, to: input.newQty, diff },
+  );
   revalidatePath(`/${session.slug}/inventario`);
   return { ok: true };
 }
