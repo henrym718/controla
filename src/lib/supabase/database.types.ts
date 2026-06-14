@@ -289,6 +289,13 @@ export type Database = {
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "cash_movements_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
         ]
       }
       daily_close: {
@@ -633,6 +640,13 @@ export type Database = {
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "expenses_voided_by_fkey"
+            columns: ["voided_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
         ]
       }
       granel_close: {
@@ -919,6 +933,13 @@ export type Database = {
           {
             foreignKeyName: "inventory_movements_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_movements_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1228,6 +1249,13 @@ export type Database = {
           {
             foreignKeyName: "sales_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_voided_by_fkey"
+            columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1609,6 +1637,15 @@ export type Database = {
         Args: { p_pin: string; p_user: string }
         Returns: undefined
       }
+      anular_operacion: {
+        Args: {
+          p_by: string
+          p_op_id: string
+          p_reason: string
+          p_restaurant: string
+        }
+        Returns: Json
+      }
       auth_estado: { Args: { p_key: string }; Returns: string }
       auth_intento: {
         Args: {
@@ -1619,15 +1656,6 @@ export type Database = {
         }
         Returns: string
       }
-      anular_operacion: {
-        Args: {
-          p_by: string
-          p_op_id: string
-          p_reason: string
-          p_restaurant: string
-        }
-        Returns: Json
-      }
       bitacora_listar: {
         Args: {
           p_category?: string
@@ -1636,30 +1664,6 @@ export type Database = {
           p_restaurant: string
           p_to: string
         }
-        Returns: Json
-      }
-      editar_producto: {
-        Args: {
-          p_adjust_kind?: string
-          p_date: string
-          p_ingredient_id: string
-          p_name: string
-          p_new_qty?: number
-          p_reason?: string
-          p_restaurant: string
-          p_sale_price?: number
-          p_session: string
-          p_unit_cost: number
-          p_user: string
-        }
-        Returns: Json
-      }
-      eliminar_producto: {
-        Args: { p_ingredient_id: string; p_restaurant: string }
-        Returns: Json
-      }
-      operaciones_reversibles: {
-        Args: { p_from: string; p_restaurant: string; p_to: string }
         Returns: Json
       }
       cerrar_dia: {
@@ -1733,6 +1737,26 @@ export type Database = {
         Args: { p_date: string; p_restaurant: string }
         Returns: Json
       }
+      editar_producto: {
+        Args: {
+          p_adjust_kind?: string
+          p_date: string
+          p_ingredient_id: string
+          p_name: string
+          p_new_qty?: number
+          p_reason?: string
+          p_restaurant: string
+          p_sale_price?: number
+          p_session: string
+          p_unit_cost: number
+          p_user: string
+        }
+        Returns: Json
+      }
+      eliminar_producto: {
+        Args: { p_ingredient_id: string; p_restaurant: string }
+        Returns: Json
+      }
       fijar_menu: {
         Args: {
           p_date: string
@@ -1750,6 +1774,10 @@ export type Database = {
           name: string
           role: string
         }[]
+      }
+      operaciones_reversibles: {
+        Args: { p_from: string; p_restaurant: string; p_to: string }
+        Returns: Json
       }
       procesar_insumo: {
         Args: {
