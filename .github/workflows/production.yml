@@ -33,5 +33,6 @@ jobs:
           SUPER_ADMIN_PIN: ${{ secrets.SUPER_ADMIN_PIN }}
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
-          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -v pin="$SUPER_ADMIN_PIN" \
-            -c "select set_super_pin(:'pin');"
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -v pin="$SUPER_ADMIN_PIN" <<'SQL'
+          select set_super_pin(:'pin');
+          SQL
