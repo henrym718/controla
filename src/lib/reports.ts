@@ -37,7 +37,7 @@ export async function computeDayReport(
   const [{ data: sales }, { data: batches }, { data: gclose }, { data: dc }] =
     await Promise.all([
       db.from("sales").select("dish_id,dish_name,qty,total")
-        .eq("restaurant_id", restaurantId).eq("business_date", date),
+        .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
       db.from("production_batches").select("total_cost")
         .eq("restaurant_id", restaurantId).eq("business_date", date),
       db.from("granel_close").select("ingredient_id,cost_per_plate,merma_cost")
@@ -158,17 +158,17 @@ export async function computeDaySummary(
     { data: sessions },
     { data: shifts },
   ] = await Promise.all([
-    db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date),
+    db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
     db.from("production_batches").select("total_cost, ingredients(name,kind)")
       .eq("restaurant_id", restaurantId).eq("business_date", date),
     db.from("inventory_movements").select("qty,unit_cost,type, ingredients(name,costing_method)")
-      .eq("restaurant_id", restaurantId).eq("business_date", date),
+      .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
     db.from("granel_close").select("merma_cost").eq("restaurant_id", restaurantId).eq("business_date", date),
     db.from("daily_close").select("status").eq("restaurant_id", restaurantId).eq("business_date", date).maybeSingle(),
     db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active")
       .eq("restaurant_id", restaurantId).eq("active", true),
     db.from("expenses").select("amount,category,note,paid_from_cash")
-      .eq("restaurant_id", restaurantId).eq("business_date", date),
+      .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
     db.from("shift_sessions").select("id,shift_id,status,opening_cash,expected_cash,counted_cash,cash_discrepancy")
       .eq("restaurant_id", restaurantId).eq("business_date", date),
     db.from("shifts").select("id,name,sort_order").eq("restaurant_id", restaurantId).order("sort_order"),
@@ -246,7 +246,7 @@ export async function computeDaySummary(
   // Caja del día: apertura + ventas efectivo + aportes − egresos (retiros + gastos + compras)
   const sessionIds = (sessions ?? []).map((s) => s.id);
   const [{ data: cashMoves }, { data: cajaLive }] = await Promise.all([
-    db.from("cash_movements").select("shift_session_id,type,amount").in("shift_session_id", sessionIds),
+    db.from("cash_movements").select("shift_session_id,type,amount").in("shift_session_id", sessionIds).is("voided_at", null),
     db.from("v_caja_turno").select("shift_session_id,caja_esperada").in("shift_session_id", sessionIds),
   ]);
   const ventasEfectivo = (sales ?? [])
@@ -377,7 +377,7 @@ export async function computeAnalytics(
     { data: prevSales },
   ] = await Promise.all([
     db.from("sales").select("total,business_date,shift_session_id")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
     db.from("shift_sessions").select("id,business_date,shift_id,responsible_user_id,status,cash_discrepancy")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("shifts").select("id,name,sort_order").eq("restaurant_id", restaurantId).eq("active", true).order("sort_order"),
@@ -390,13 +390,13 @@ export async function computeAnalytics(
     db.from("production_batches").select("total_cost,business_date")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("inventory_movements").select("type,qty,unit_cost,total_cost,business_date,user_id, ingredients(costing_method)")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
     db.from("granel_close").select("business_date,merma_cost,pool_cost")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("expenses").select("amount,category,note,user_id,business_date")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
     db.from("sales").select("total")
-      .eq("restaurant_id", restaurantId).gte("business_date", prevFrom).lte("business_date", prevTo),
+      .eq("restaurant_id", restaurantId).gte("business_date", prevFrom).lte("business_date", prevTo).is("voided_at", null),
   ]);
 
   const dates = eachDate(from, to);
@@ -710,7 +710,7 @@ export async function computePnL(
 
   const [{ data: sales }, { data: batches }, { data: recurring }] = await Promise.all([
     db.from("sales").select("total")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
     db.from("production_batches").select("total_cost")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active")

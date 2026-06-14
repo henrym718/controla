@@ -38,6 +38,7 @@ function buildSystem(
     "- CONSUMO del día para cocinar, sin venderlo y sin nombrar un resultado (ej. 'consumimos 4 tomates', 'usamos 10 huevos hoy') → usa consumir_insumo: baja el stock y suma su costo al pool/costo del día de HOY. NO preguntes el costo.",
     "- Al COMPRAR algo que YA existe en el inventario, NO vuelvas a preguntar el precio de venta (ya está guardado) ni el costo unitario: el costo se promedia solo con lo que había.",
     "- Para retiros de caja o de inventario, el motivo es obligatorio.",
+    "- ANULAR/REVERSAR (ej. 'anula la última venta', 'devolvieron las 2 colas', 'reversa la compra de arroz') → usa anular_operacion con el tipo (venta/compra/gasto/caja) y una pista de cuál. Pedirá el PIN de administradora al confirmar.",
     "- La app pedirá confirmación antes de guardar; tú solo decide la acción.",
     "",
     "MENÚ DE HOY (este turno) — usa estos precios al vender:",
@@ -149,7 +150,12 @@ export async function POST(req: Request) {
 
   if (decision.functionCalls?.length) {
     // Puede haber VARIAS acciones en un solo dictado: se procesan todas.
-    const actions: { tool: string; args: Record<string, unknown>; preview: string }[] = [];
+    const actions: {
+      tool: string;
+      args: Record<string, unknown>;
+      preview: string;
+      requiresPin?: boolean;
+    }[] = [];
     const notas: string[] = [];
 
     for (const fc of decision.functionCalls) {
@@ -165,7 +171,7 @@ export async function POST(req: Request) {
           notas.push(r.message);
         } else {
           const preview = tool.preview ? await tool.preview(args, ctx) : "¿Confirmo esta acción?";
-          actions.push({ tool: tool.name, args, preview });
+          actions.push({ tool: tool.name, args, preview, requiresPin: tool.requiresPin });
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "No pude preparar una acción";

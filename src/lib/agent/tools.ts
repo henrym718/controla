@@ -10,6 +10,8 @@ export type Db = SupabaseClient<Database>;
 export interface ToolCtx {
   db: Db;
   session: SessionClaims;
+  /** PIN de admin ingresado al confirmar (solo para acciones sensibles). */
+  pin?: string;
 }
 export interface ToolResult {
   message: string;
@@ -20,10 +22,31 @@ interface Tool {
   name: string;
   mode: "read" | "write";
   description: string;
+  /** Exige PIN de admin al confirmar (anular, eliminar). */
+  requiresPin?: boolean;
   parameters: Record<string, unknown>; // schema estilo Gemini
   validate: (raw: unknown) => Record<string, unknown>;
   preview?: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<string>;
   execute: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolResult>;
+}
+
+/**
+ * Valida el PIN de CUALQUIER usuario activo (admin o empleada) y devuelve quién
+ * es, para firmar la acción. Lo usan las reversas: las registran tanto la admin
+ * como las empleadas, así que basta un PIN válido del restaurante.
+ */
+async function requireValidPin(
+  ctx: ToolCtx,
+): Promise<{ id: string; name: string; role: string }> {
+  const pin = (ctx.pin ?? "").trim();
+  if (!pin) throw new Error("Ingresa tu PIN para confirmar.");
+  const { data } = await ctx.db.rpc("login_pin", {
+    p_restaurant: ctx.session.restaurant_id,
+    p_pin: pin,
+  });
+  const u = (data as { id: string; name: string; role: string }[] | null)?.[0];
+  if (!u) throw new Error("PIN inválido.");
+  return u;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -122,12 +145,57 @@ async function resolveSaleTarget(
   return { kind: "plato", dishId: null, ingredientId: null, name, price: unitPrice ?? null, source: "nuevo" };
 }
 
+/** Mapea el "tipo" hablado a los códigos de evento reversibles. */
+const EVENT_BY_TIPO: Record<string, string[]> = {
+  venta: ["venta"],
+  compra: ["compra"],
+  gasto: ["gasto"],
+  caja: ["ingreso_caja", "egreso_caja"],
+  cualquiera: ["venta", "compra", "gasto", "ingreso_caja", "egreso_caja"],
+};
+
+interface OpRow {
+  op_id: string;
+  event_code: string;
+  description: string;
+  anulada: boolean;
+  created_at: string;
+}
+
+/** Resuelve la operación reciente a anular (la más nueva que no esté anulada). */
+async function resolveOperacion(
+  ctx: ToolCtx,
+  tipo: string,
+  descripcion?: string,
+): Promise<{ opId: string; description: string } | null> {
+  const to = businessDate();
+  const d = new Date(`${to}T00:00:00`);
+  d.setDate(d.getDate() - 2);
+  const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const { data } = await ctx.db.rpc("operaciones_reversibles", {
+    p_restaurant: ctx.session.restaurant_id,
+    p_from: from,
+    p_to: to,
+  });
+  const rows = (data as unknown as OpRow[] | null) ?? [];
+  const codes = EVENT_BY_TIPO[tipo] ?? EVENT_BY_TIPO.cualquiera;
+  const hint = (descripcion ?? "").toLowerCase().trim();
+  const match = rows.find(
+    (r) =>
+      !r.anulada &&
+      codes.includes(r.event_code) &&
+      (!hint || (r.description ?? "").toLowerCase().includes(hint)),
+  );
+  return match ? { opId: match.op_id, description: match.description } : null;
+}
+
 /** Registra el evento en la bitácora (toda acción de la IA es source 'ia'). */
 async function logEvent(
   ctx: ToolCtx,
   event: EventCode,
   description: string,
   metadata?: Record<string, unknown>,
+  opId?: string | null,
 ) {
   await logActivity(ctx.db, {
     restaurantId: ctx.session.restaurant_id,
@@ -138,6 +206,7 @@ async function logEvent(
     event,
     description,
     metadata,
+    opId,
   });
 }
 
@@ -231,6 +300,10 @@ const menuSchema = z.object({
 const agotadoSchema = z.object({ dish_name: z.string().min(1) });
 const consultaInvSchema = z.object({ product_name: z.string().optional() });
 const consultaVentasSchema = z.object({ dish_name: z.string().optional() });
+const anularSchema = z.object({
+  tipo: z.enum(["venta", "compra", "gasto", "caja", "cualquiera"]).default("cualquiera"),
+  descripcion: z.string().optional(),
+});
 
 // ---------------------------------------------------------------------------
 //  Herramientas
@@ -425,11 +498,13 @@ export const TOOLS: Record<string, Tool> = {
       } as unknown as Database["public"]["Functions"]["registrar_venta"]["Args"]);
       if (error) throw new Error(error.message);
       const total = Number((data as { total?: number } | null)?.total ?? t.price * a.qty);
+      const opId = (data as { op_id?: string } | null)?.op_id ?? null;
       await logEvent(
         ctx,
         "venta",
         `Venta de ${a.qty} × ${t.name} por ${money(total)} (${a.service_type}, ${a.payment_method})`,
         { item: t.name, qty: a.qty, total, payment_method: a.payment_method },
+        opId,
       );
       return { message: `✅ Venta: ${a.qty} × ${t.name} = ${money(total)}.` };
     },
@@ -480,7 +555,7 @@ export const TOOLS: Record<string, Tool> = {
       }
       if (!ing) throw new Error("No pude registrar el producto.");
 
-      const { error } = await ctx.db.rpc("registrar_compra", {
+      const { data: compraData, error } = await ctx.db.rpc("registrar_compra", {
         p_restaurant: ctx.session.restaurant_id,
         p_session: ctx.session.shift_session_id,
         p_user: ctx.session.user_id,
@@ -500,6 +575,7 @@ export const TOOLS: Record<string, Tool> = {
         "compra",
         `Compra de ${ing.name} por ${money(a.total_cost)}${qtyTxt} — pagó ${a.fuente_pago === "jefa" ? "la jefa" : "la caja"}`,
         { ingredient: ing.name, total_cost: a.total_cost, quantity: a.quantity ?? null, fuente: a.fuente_pago },
+        (compraData as { op_id?: string } | null)?.op_id ?? null,
       );
       return { message: `✅ Compra: ${ing.name} ${money(a.total_cost)}${sp}.` };
     },
@@ -886,7 +962,7 @@ export const TOOLS: Record<string, Tool> = {
     },
     execute: async (args, ctx) => {
       const a = gastoSchema.parse(args);
-      const { error } = await ctx.db.rpc("registrar_gasto", {
+      const { data: gastoData, error } = await ctx.db.rpc("registrar_gasto", {
         p_restaurant: ctx.session.restaurant_id,
         p_session: ctx.session.shift_session_id,
         p_user: ctx.session.user_id,
@@ -902,6 +978,7 @@ export const TOOLS: Record<string, Tool> = {
         "gasto",
         `Gasto de ${money(a.amount)} (${a.category})${a.note ? ` — ${a.note}` : ""} — pagó ${a.fuente_pago === "jefa" ? "la jefa" : "la caja"}`,
         { amount: a.amount, category: a.category, note: a.note ?? null, fuente: a.fuente_pago },
+        (gastoData as { op_id?: string } | null)?.op_id ?? null,
       );
       return { message: `✅ Gasto registrado: ${money(a.amount)} (${a.category}).` };
     },
@@ -924,7 +1001,8 @@ export const TOOLS: Record<string, Tool> = {
     },
     execute: async (args, ctx) => {
       const a = cajaInSchema.parse(args);
-      const { data } = await ctx.db
+      const opId = crypto.randomUUID();
+      await ctx.db
         .from("cash_movements")
         .insert({
           restaurant_id: ctx.session.restaurant_id,
@@ -933,14 +1011,14 @@ export const TOOLS: Record<string, Tool> = {
           type: "ingreso",
           amount: a.amount,
           reason: a.reason ?? null,
-        })
-        .select("id")
-        .single();
+          op_id: opId,
+        });
       await logEvent(
         ctx,
         "ingreso_caja",
         `Ingreso a caja de ${money(a.amount)}${a.reason ? ` — ${a.reason}` : ""}`,
         { amount: a.amount, reason: a.reason ?? null },
+        opId,
       );
       return { message: `✅ Ingreso a caja: ${money(a.amount)}.` };
     },
@@ -965,7 +1043,8 @@ export const TOOLS: Record<string, Tool> = {
     },
     execute: async (args, ctx) => {
       const a = cajaOutSchema.parse(args);
-      const { data } = await ctx.db
+      const opId = crypto.randomUUID();
+      await ctx.db
         .from("cash_movements")
         .insert({
           restaurant_id: ctx.session.restaurant_id,
@@ -974,14 +1053,14 @@ export const TOOLS: Record<string, Tool> = {
           type: "egreso",
           amount: a.amount,
           reason: a.reason,
-        })
-        .select("id")
-        .single();
+          op_id: opId,
+        });
       await logEvent(
         ctx,
         "egreso_caja",
         `Retiro de caja de ${money(a.amount)} — ${a.reason}`,
         { amount: a.amount, reason: a.reason },
+        opId,
       );
       return { message: `✅ Retiro de caja: ${money(a.amount)} — ${a.reason}.` };
     },
@@ -1086,7 +1165,8 @@ export const TOOLS: Record<string, Tool> = {
       const { data } = await ctx.db
         .from("sales")
         .select("qty,total,dish_name")
-        .eq("shift_session_id", ctx.session.shift_session_id);
+        .eq("shift_session_id", ctx.session.shift_session_id)
+        .is("voided_at", null);
       let rows = data ?? [];
       if (a.dish_name) {
         const n = a.dish_name.toLowerCase();
@@ -1201,6 +1281,63 @@ export const TOOLS: Record<string, Tool> = {
       if (error) throw new Error(error.message);
       await logEvent(ctx, "cerrar_dia", "Cerró el día (prorrateo del pool del granel)");
       return { message: "🔒 Día cerrado. Costos del pool calculados." };
+    },
+  },
+
+  // ============================== REVERSA ==================================
+  anular_operacion: {
+    name: "anular_operacion",
+    mode: "write",
+    requiresPin: true,
+    description:
+      "Anula (reversa) una transacción registrada por error o devuelta: una VENTA, una COMPRA, un GASTO o un movimiento de CAJA. Úsalo cuando digan 'anula/reversa/borra la última venta', 'devolvieron las 2 colas', 'anula la compra de arroz'. Restaura el stock y la caja. EXIGE un PIN (de la admin o de la empleada) al confirmar; lo puede hacer cualquiera del turno.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        tipo: {
+          type: "STRING",
+          enum: ["venta", "compra", "gasto", "caja", "cualquiera"],
+          description: "Qué tipo de operación se anula",
+        },
+        descripcion: {
+          type: "STRING",
+          description: "Pista de qué operación (ej. '2 colas', 'arroz', '$5'). Vacío = la última de ese tipo.",
+        },
+      },
+      required: ["tipo"],
+    },
+    validate: (raw) => anularSchema.parse(raw),
+    preview: async (args, ctx) => {
+      const a = anularSchema.parse(args);
+      const op = await resolveOperacion(ctx, a.tipo, a.descripcion);
+      if (!op) throw new Error(`No encontré una ${a.tipo === "cualquiera" ? "operación" : a.tipo} reciente para anular.`);
+      return `Anular: ${op.description}. Esto revierte la plata y el stock. Necesita PIN de administradora. ¿Confirmo?`;
+    },
+    execute: async (args, ctx) => {
+      const a = anularSchema.parse(args);
+      const actor = await requireValidPin(ctx);
+      const op = await resolveOperacion(ctx, a.tipo, a.descripcion);
+      if (!op) throw new Error(`No encontré una ${a.tipo === "cualquiera" ? "operación" : a.tipo} reciente para anular.`);
+      const { error } = await ctx.db.rpc("anular_operacion", {
+        p_restaurant: ctx.session.restaurant_id,
+        p_op_id: op.opId,
+        p_reason: a.descripcion ? `IA: ${a.descripcion}` : "Anulación por voz",
+        p_by: actor.id,
+      });
+      if (error) throw new Error(error.message);
+      // Firmado por quien puso el PIN (admin o empleada), no por la sesión.
+      await logActivity(ctx.db, {
+        restaurantId: ctx.session.restaurant_id,
+        userId: actor.id,
+        actorName: actor.name,
+        shiftSessionId: ctx.session.shift_session_id,
+        source: "ia",
+        event: "anulacion",
+        description: `Anuló: ${op.description}`,
+        metadata: { op_id: op.opId, role: actor.role },
+        opId: op.opId,
+      });
+      return { message: `↩️ Anulado: ${op.description}.` };
     },
   },
 };

@@ -40,7 +40,10 @@ export type EventCode =
   | "usuario"
   | "turno_config"
   | "plato_config"
-  | "costo_fijo";
+  | "costo_fijo"
+  | "producto_editado"
+  | "producto_baja"
+  | "anulacion";
 
 export interface LogInput {
   restaurantId: string;
@@ -51,6 +54,8 @@ export interface LogInput {
   event: EventCode;
   description: string;
   metadata?: Record<string, unknown> | null;
+  /** Agrupa las filas de una operación reversible (venta, compra, gasto, caja). */
+  opId?: string | null;
 }
 
 /** Registra un evento en la bitácora. Silencioso ante errores (log secundario). */
@@ -65,6 +70,7 @@ export async function logActivity(db: Db, input: LogInput): Promise<void> {
       event_code: input.event,
       description: input.description,
       metadata: (input.metadata ?? null) as Json,
+      op_id: input.opId ?? null,
     });
   } catch {
     // La bitácora nunca debe romper la operación real.
