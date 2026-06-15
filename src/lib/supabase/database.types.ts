@@ -1108,6 +1108,7 @@ export type Database = {
           category: string
           created_at: string
           day_of_month: number | null
+          effective_from: string
           id: string
           name: string
           next_run: string | null
@@ -1123,6 +1124,7 @@ export type Database = {
           category?: string
           created_at?: string
           day_of_month?: number | null
+          effective_from?: string
           id?: string
           name: string
           next_run?: string | null
@@ -1138,6 +1140,7 @@ export type Database = {
           category?: string
           created_at?: string
           day_of_month?: number | null
+          effective_from?: string
           id?: string
           name?: string
           next_run?: string | null
