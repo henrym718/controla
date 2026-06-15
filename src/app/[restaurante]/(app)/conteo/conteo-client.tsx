@@ -94,7 +94,8 @@ export default function ConteoClient({
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Conteo de cierre</h1>
         <p className="text-sm opacity-60">
-          Cuenta lo que hay físicamente. El sistema sabe cuánto debería haber.
+          Auditoría anti-robo opcional — no toca el costo de los platos. Cuentas el stock físico
+          (bebidas, carnes, presas…); si falta, es plata perdida.
         </p>
       </div>
       <DayNav value={date} today={today} onChange={change} />

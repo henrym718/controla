@@ -25,7 +25,8 @@ export default async function HoyPage({
       .from("sales")
       .select("total")
       .eq("shift_session_id", session.shift_session_id)
-      .is("voided_at", null),
+      .is("voided_at", null)
+      .eq("consumo_interno", false),
     db
       .from("daily_menu")
       .select("price,available,dishes(name)")
@@ -42,16 +43,16 @@ export default async function HoyPage({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
         <Stat
-          label="Ventas del turno"
-          value={`$${totalVentas.toFixed(2)}`}
-          tone="mint"
-          hint={`${ventas?.length ?? 0} ventas`}
-        />
-        <Stat
           label="Caja esperada"
           value={`$${Number(caja?.caja_esperada ?? 0).toFixed(2)}`}
           tone="lav"
           hint={`inicial $${Number(caja?.opening_cash ?? 0).toFixed(2)}`}
+        />
+        <Stat
+          label="Ventas del turno"
+          value={`$${totalVentas.toFixed(2)}`}
+          tone="mint"
+          hint={`${ventas?.length ?? 0} ventas`}
         />
       </div>
 
@@ -100,28 +101,29 @@ export default async function HoyPage({
         </span>
       </Link>
 
-      <LinkButton href={`/${restaurante}/cierre-turno`} variant="outline">
-        Cerrar turno y cuadrar caja
-      </LinkButton>
-
-      <Link
-        href={`/${restaurante}/reversar`}
-        className="rounded-3xl border border-ink/10 p-4 text-sm font-semibold"
-      >
-        <div className="flex items-center justify-between">
-          <span>Anular algo registrado por error</span>
-          <span className="text-xs font-semibold text-coral">Reversar</span>
-        </div>
-        <p className="mt-1 text-xs font-normal opacity-50">
-          Una venta, compra, gasto o caja. Pide tu PIN.
-        </p>
-      </Link>
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          href={`/${restaurante}/cierre-turno`}
+          className="flex min-h-24 flex-col justify-between rounded-3xl bg-peach p-4"
+        >
+          <span className="text-base font-bold leading-tight">Cerrar turno</span>
+          <span className="text-xs opacity-60">Cuadrar la caja y entregar</span>
+        </Link>
+        <Link
+          href={`/${restaurante}/reversar`}
+          className="flex min-h-24 flex-col justify-between rounded-3xl bg-sand p-4"
+        >
+          <span className="text-base font-bold leading-tight">Anular algo</span>
+          <span className="text-xs opacity-60">Una venta o gasto por error</span>
+        </Link>
+      </div>
 
       <Link
         href={`/${restaurante}/cambiar-turno`}
-        className="text-center text-xs font-medium text-ink/50 underline underline-offset-2"
+        className="rounded-2xl border border-ink/15 p-3 text-center text-sm font-semibold"
       >
-        Me equivoqué de turno
+        Cambiar de turno
+        <span className="block text-xs font-normal opacity-50">¿Entraste al turno equivocado?</span>
       </Link>
 
       {session.user_role === "admin" && (

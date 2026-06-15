@@ -44,5 +44,24 @@ export default async function CierrePage({
     };
   }
 
-  return <CierreClient slug={restaurante} resumen={resumen} />;
+  // Detalle de lo vendido en el turno (para que la encargada vea qué registró).
+  const { data: salesRows } = await db
+    .from("sales")
+    .select("dish_name,qty,total")
+    .eq("shift_session_id", session.shift_session_id)
+    .is("voided_at", null)
+    .eq("consumo_interno", false);
+  const detMap = new Map<string, { qty: number; total: number }>();
+  for (const s of salesRows ?? []) {
+    const k = s.dish_name ?? "—";
+    const e = detMap.get(k) ?? { qty: 0, total: 0 };
+    e.qty += Number(s.qty);
+    e.total += Number(s.total);
+    detMap.set(k, e);
+  }
+  const ventasDetalle = [...detMap.entries()]
+    .map(([name, v]) => ({ name, qty: v.qty, total: v.total }))
+    .sort((a, b) => b.total - a.total);
+
+  return <CierreClient slug={restaurante} resumen={resumen} ventasDetalle={ventasDetalle} />;
 }

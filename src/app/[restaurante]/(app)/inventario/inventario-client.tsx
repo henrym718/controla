@@ -6,7 +6,6 @@ import {
   agregarProductoInventario,
   editarProductoInventario,
   eliminarProductoInventario,
-  procesarInsumoAction,
 } from "../admin/actions";
 
 interface Product {
@@ -23,71 +22,45 @@ const inputCls =
 
 export default function InventarioClient({ products }: { products: Product[] }) {
   const [showAdd, setShowAdd] = useState(false);
-  const [showProcesar, setShowProcesar] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <PageTitle title="Inventario" />
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowProcesar(true)}
-            className="rounded-full bg-lav px-4 py-2 text-sm font-semibold"
-          >
-            Procesar
-          </button>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-ink text-2xl font-bold text-white"
-            aria-label="Agregar producto"
-          >
-            +
-          </button>
-        </div>
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-ink text-2xl font-bold text-white"
+          aria-label="Agregar producto"
+        >
+          +
+        </button>
       </div>
 
-      {/* tabla */}
-      <div className="overflow-hidden rounded-3xl border border-ink/10">
-        <div className="flex bg-ink/5 px-4 py-2 text-xs font-semibold opacity-60">
-          <span className="flex-1">Producto</span>
-          <span className="w-16 text-right">Stock</span>
-          <span className="w-20 text-right">Costo</span>
-        </div>
-        {products.map((p) => (
-          <div key={p.id} className="border-t border-ink/5">
-            <button
-              onClick={() => setEditing(p.id)}
-              className="flex w-full items-center px-4 py-3 text-left text-sm"
-            >
-              <span className="flex-1 font-medium">
-                {p.name}
-                {p.sellable && p.salePrice != null && (
-                  <span className="ml-2 rounded-full bg-mint px-2 py-0.5 text-[11px] font-semibold">
-                    vende ${p.salePrice.toFixed(2)}
-                  </span>
-                )}
-              </span>
-              <span className="w-16 text-right">{p.stock}</span>
-              <span className="w-20 text-right opacity-70">${p.cost.toFixed(2)}</span>
-            </button>
-          </div>
-        ))}
-        {products.length === 0 && (
-          <p className="px-4 py-6 text-center text-sm opacity-50">
-            Sin productos. Toca + para agregar.
-          </p>
-        )}
-      </div>
+      <ProductTable
+        title="Para cocinar"
+        hint="se usa en las recetas"
+        products={products.filter((p) => !p.sellable)}
+        onEdit={setEditing}
+      />
+      <ProductTable
+        title="De venta"
+        hint="se vende directo al cliente"
+        products={products.filter((p) => p.sellable)}
+        onEdit={setEditing}
+        showSale
+      />
 
+      {products.length === 0 && (
+        <p className="rounded-2xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-50">
+          Sin productos. Toca + para agregar.
+        </p>
+      )}
       <p className="text-center text-xs opacity-50">
         Toca un producto para editarlo o ajustar su stock (requiere PIN de admin).
       </p>
 
       {showAdd && <AddModal onClose={() => setShowAdd(false)} />}
-      {showProcesar && (
-        <ProcesarModal products={products} onClose={() => setShowProcesar(false)} />
-      )}
       {editing && (
         <EditModal
           item={products.find((p) => p.id === editing)!}
@@ -98,118 +71,149 @@ export default function InventarioClient({ products }: { products: Product[] }) 
   );
 }
 
-function ProcesarModal({
+function ProductTable({
+  title,
+  hint,
   products,
-  onClose,
+  onEdit,
+  showSale,
 }: {
+  title: string;
+  hint: string;
   products: Product[];
-  onClose: () => void;
+  onEdit: (id: string) => void;
+  showSale?: boolean;
 }) {
-  const [inputId, setInputId] = useState(products[0]?.id ?? "");
-  const [inputQty, setInputQty] = useState("");
-  const [outputName, setOutputName] = useState("");
-  const [outputUnits, setOutputUnits] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-
-  const input = products.find((p) => p.id === inputId);
-  const iq = Number(inputQty) || 0;
-  const cost = (input?.cost ?? 0) * iq;
-  const ou = Number(outputUnits) || 0;
-
-  const submit = () => {
-    setMsg(null);
-    if (!inputId || iq <= 0) return setMsg("Elige el insumo y cuánto se usó.");
-    if (!outputName.trim()) return setMsg("Escribe qué salió (presa, tajada, tortilla…).");
-    start(async () => {
-      const r = await procesarInsumoAction({
-        inputId,
-        inputQty: iq,
-        outputName: outputName.trim(),
-        outputUnits: ou > 0 ? ou : null,
-      });
-      if (r.error) setMsg(r.error);
-      else onClose();
-    });
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
-      <div className="w-full max-w-sm rounded-3xl bg-white p-5">
-        <p className="text-lg font-bold">Procesar insumo</p>
-        <p className="mb-3 text-xs opacity-50">
-          Ej: de 2 pollos salieron 28 presas. Hereda el costo del crudo.
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+          {title} · {products.length}
         </p>
-        <div className="flex flex-col gap-2">
-          <label className="text-xs font-medium opacity-60">Insumo crudo (sale del stock)</label>
-          <select
-            value={inputId}
-            onChange={(e) => setInputId(e.target.value)}
-            className={inputCls}
-          >
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} (stock {p.stock})
-              </option>
-            ))}
-          </select>
-          <input
-            value={inputQty}
-            onChange={(e) => setInputQty(e.target.value)}
-            inputMode="decimal"
-            className={inputCls}
-            placeholder="¿Cuánto se usó? (ej. 2)"
-          />
-          <p className="text-center text-xs opacity-60">
-            Costo que se traslada: <span className="font-bold">${cost.toFixed(2)}</span>
-          </p>
-          <label className="text-xs font-medium opacity-60">¿Qué salió?</label>
-          <input
-            value={outputName}
-            onChange={(e) => setOutputName(e.target.value)}
-            className={inputCls}
-            placeholder="Presa, tajada, tortilla…"
-          />
-          <input
-            value={outputUnits}
-            onChange={(e) => setOutputUnits(e.target.value)}
-            inputMode="numeric"
-            className={inputCls}
-            placeholder="¿Cuántas salieron? (vacío = a granel)"
-          />
-          {ou > 0 && iq > 0 && (
-            <p className="text-center text-xs opacity-60">
-              Costo por unidad: <span className="font-bold">${(cost / ou).toFixed(2)}</span>
-            </p>
-          )}
-          <div className="mt-1 flex gap-2">
+        <p className="text-[11px] opacity-40">{hint}</p>
+      </div>
+      <div className="overflow-hidden rounded-3xl border border-ink/10">
+        <div className="flex bg-ink/5 px-4 py-2 text-xs font-semibold opacity-60">
+          <span className="flex-1">Producto</span>
+          {showSale && <span className="w-16 text-right">Venta</span>}
+          <span className="w-16 text-right">Unidades</span>
+          <span className="w-16 text-right">Costo u.</span>
+        </div>
+        {products.map((p) => (
+          <div key={p.id} className="border-t border-ink/5">
             <button
-              onClick={submit}
-              disabled={pending}
-              className="flex-1 rounded-full bg-ink py-3 font-semibold text-white"
+              onClick={() => onEdit(p.id)}
+              className="flex w-full items-center px-4 py-3 text-left text-sm"
             >
-              {pending ? "Guardando…" : "Procesar"}
-            </button>
-            <button onClick={onClose} className="rounded-full border border-ink/15 px-5 py-3 font-semibold">
-              Cancelar
+              <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+              {showSale && (
+                <span className="w-16 text-right font-semibold text-teal">
+                  {p.salePrice != null ? `$${p.salePrice.toFixed(2)}` : "—"}
+                </span>
+              )}
+              <span className="w-16 text-right">{p.stock}</span>
+              <span className="w-16 text-right opacity-70">${p.cost.toFixed(2)}</span>
             </button>
           </div>
-          {msg && <p className="text-center text-sm text-coral">{msg}</p>}
-        </div>
+        ))}
+        {products.length === 0 && (
+          <p className="px-4 py-5 text-center text-sm opacity-40">Nada aquí todavía.</p>
+        )}
       </div>
     </div>
   );
 }
 
 function AddModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<"cocina" | "venta">("cocina");
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+      <div className="max-h-[92vh] w-full max-w-sm overflow-y-auto rounded-3xl bg-white p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-lg font-bold">Agregar producto</p>
+          <button onClick={onClose} className="text-sm font-semibold opacity-50">
+            Cerrar
+          </button>
+        </div>
+        <div className="mb-4 flex gap-1 rounded-full bg-ink/5 p-1">
+          <button
+            onClick={() => setTab("cocina")}
+            className={`flex-1 rounded-full px-3 py-2 text-sm font-semibold transition ${
+              tab === "cocina" ? "bg-ink text-white" : "opacity-60"
+            }`}
+          >
+            Para cocinar
+          </button>
+          <button
+            onClick={() => setTab("venta")}
+            className={`flex-1 rounded-full px-3 py-2 text-sm font-semibold transition ${
+              tab === "venta" ? "bg-ink text-white" : "opacity-60"
+            }`}
+          >
+            De venta
+          </button>
+        </div>
+        {tab === "cocina" ? <FormInsumo onDone={onClose} /> : <FormVenta onDone={onClose} />}
+      </div>
+    </div>
+  );
+}
+
+// Producto que se USA para cocinar (presa de pollo, arroz…): sin precio de venta.
+function FormInsumo({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [qty, setQty] = useState("");
   const [total, setTotal] = useState("");
-  const [sellable, setSellable] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const q = Number(qty) || 0;
+  const t = Number(total) || 0;
+  const unit = q > 0 ? t / q : 0;
+
+  const submit = () => {
+    setMsg(null);
+    if (!name.trim() || q <= 0) return setMsg("Completa nombre y cantidad.");
+    start(async () => {
+      const r = await agregarProductoInventario({
+        name: name.trim(),
+        qty: q,
+        totalCost: t,
+        salePrice: null,
+      });
+      if (r.error) setMsg(r.error);
+      else onDone();
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="mb-1 text-xs opacity-50">
+        Lo que se usa para cocinar (presa de pollo, libra de arroz, carne…). No se vende directo; entra a las recetas.
+      </p>
+      <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Nombre (presa de pollo, arroz…)" />
+      <div className="flex gap-2">
+        <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="numeric" className={inputCls} placeholder="Cantidad" />
+        <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Costo total $" />
+      </div>
+      <p className="text-center text-sm">
+        Costo por unidad: <span className="font-bold">${unit.toFixed(2)}</span>
+      </p>
+      <button onClick={submit} disabled={pending} className="mt-1 rounded-full bg-ink py-3 font-semibold text-white">
+        {pending ? "Guardando…" : "Agregar para cocinar"}
+      </button>
+      {msg && <p className="text-center text-sm text-coral">{msg}</p>}
+    </div>
+  );
+}
+
+// Producto que se VENDE directo (cola, agua…): lleva precio de venta al público.
+function FormVenta({ onDone }: { onDone: () => void }) {
+  const [name, setName] = useState("");
+  const [qty, setQty] = useState("");
+  const [total, setTotal] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
-
   const q = Number(qty) || 0;
   const t = Number(total) || 0;
   const unit = q > 0 ? t / q : 0;
@@ -218,62 +222,37 @@ function AddModal({ onClose }: { onClose: () => void }) {
   const submit = () => {
     setMsg(null);
     if (!name.trim() || q <= 0) return setMsg("Completa nombre y cantidad.");
-    if (sellable && sp <= 0) return setMsg("Indica el precio de venta.");
+    if (sp <= 0) return setMsg("Indica el precio de venta.");
     start(async () => {
       const r = await agregarProductoInventario({
         name: name.trim(),
         qty: q,
         totalCost: t,
-        salePrice: sellable ? sp : null,
+        salePrice: sp,
       });
       if (r.error) setMsg(r.error);
-      else onClose();
+      else onDone();
     });
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
-      <div className="w-full max-w-sm rounded-3xl bg-white p-5">
-        <p className="text-lg font-bold">Agregar producto</p>
-        <p className="mb-3 text-xs opacity-50">Ej: 10 gaseosas por $10</p>
-        <div className="flex flex-col gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Nombre del producto" />
-          <div className="flex gap-2">
-            <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="numeric" className={inputCls} placeholder="Cantidad" />
-            <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Costo total $" />
-          </div>
-          <p className="text-center text-sm">
-            Costo por unidad: <span className="font-bold">${unit.toFixed(2)}</span>
-          </p>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sellable}
-              onChange={(e) => setSellable(e.target.checked)}
-              className="h-4 w-4"
-            />
-            Se vende directo (cola, agua…)
-          </label>
-          {sellable && (
-            <input
-              value={salePrice}
-              onChange={(e) => setSalePrice(e.target.value)}
-              inputMode="decimal"
-              className={inputCls}
-              placeholder="Precio de venta $"
-            />
-          )}
-          <div className="mt-1 flex gap-2">
-            <button onClick={submit} disabled={pending} className="flex-1 rounded-full bg-ink py-3 font-semibold text-white">
-              {pending ? "Guardando…" : "Agregar"}
-            </button>
-            <button onClick={onClose} className="rounded-full border border-ink/15 px-5 py-3 font-semibold">
-              Cancelar
-            </button>
-          </div>
-          {msg && <p className="text-center text-sm text-coral">{msg}</p>}
-        </div>
+    <div className="flex flex-col gap-2">
+      <p className="mb-1 text-xs opacity-50">
+        Lo que se vende directo al cliente (cola, agua, jugo…). Se descuenta del stock al venderlo.
+      </p>
+      <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Nombre (Cola 1 litro, Agua…)" />
+      <div className="flex gap-2">
+        <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="numeric" className={inputCls} placeholder="Cantidad" />
+        <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Costo total $" />
       </div>
+      <p className="text-center text-sm">
+        Costo por unidad: <span className="font-bold">${unit.toFixed(2)}</span>
+      </p>
+      <input value={salePrice} onChange={(e) => setSalePrice(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Precio de venta al público $" />
+      <button onClick={submit} disabled={pending} className="mt-1 rounded-full bg-ink py-3 font-semibold text-white">
+        {pending ? "Guardando…" : "Agregar para venta"}
+      </button>
+      {msg && <p className="text-center text-sm text-coral">{msg}</p>}
     </div>
   );
 }

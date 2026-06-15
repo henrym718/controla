@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { eachDate, parseLocal } from "@/lib/range";
+import { businessDate } from "@/lib/shifts";
 
 type Db = SupabaseClient<Database>;
 
@@ -37,7 +38,7 @@ export async function computeDayReport(
   const [{ data: sales }, { data: batches }, { data: gclose }, { data: dc }] =
     await Promise.all([
       db.from("sales").select("dish_id,dish_name,qty,total")
-        .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
+        .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null).eq("consumo_interno", false),
       db.from("production_batches").select("total_cost")
         .eq("restaurant_id", restaurantId).eq("business_date", date),
       db.from("granel_close").select("ingredient_id,cost_per_plate,merma_cost")
@@ -128,6 +129,8 @@ export interface DaySummary {
   productos: { total: number; items: { name: string; cost: number }[] };
   gastos: { total: number; items: { name: string; cost: number }[] };
   fijos: { operativo: number; administrativo: number; financiero: number; total: number };
+  // Consumo interno de empleadas (informativo; su costo ya está dentro de los costos)
+  empleadas: { total: number; n: number; items: { name: string; persona: string; cost: number }[] };
   caja: {
     apertura: number;
     ventasEfectivo: number;
@@ -158,7 +161,7 @@ export async function computeDaySummary(
     { data: sessions },
     { data: shifts },
   ] = await Promise.all([
-    db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
+    db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null).eq("consumo_interno", false),
     db.from("production_batches").select("total_cost, ingredients(name,kind)")
       .eq("restaurant_id", restaurantId).eq("business_date", date),
     db.from("inventory_movements").select("qty,unit_cost,type, ingredients(name,costing_method)")
@@ -278,6 +281,48 @@ export async function computeDaySummary(
   const contadaTotal = anyCerrado ? turnos.reduce((s, t) => s + (t.contada ?? 0), 0) : null;
   const descuadreTotal = anyCerrado ? turnos.reduce((s, t) => s + (t.descuadre ?? 0), 0) : null;
 
+  // Consumo de empleadas (interno): informativo — la proteína ya está contada
+  // en los costos de arriba; aquí mostramos cuánto comió y quién.
+  const { data: internas } = await db
+    .from("sales")
+    .select("dish_id,dish_name,qty,user_id")
+    .eq("restaurant_id", restaurantId)
+    .eq("business_date", date)
+    .eq("consumo_interno", true)
+    .is("voided_at", null);
+
+  const empItems: { name: string; persona: string; cost: number }[] = [];
+  let empleadasTotal = 0;
+  if (internas && internas.length) {
+    const idishIds = [...new Set(internas.map((s) => s.dish_id).filter(Boolean))] as string[];
+    const dishCost = new Map<string, number>();
+    if (idishIds.length) {
+      const { data: ucomps } = await db
+        .from("dish_components")
+        .select("dish_id, qty, ingredients(kind,last_unit_cost)")
+        .in("dish_id", idishIds);
+      for (const c of ucomps ?? []) {
+        const ing = c.ingredients as unknown as { kind: string; last_unit_cost: number | null } | null;
+        if (!ing || ing.kind !== "contable") continue;
+        dishCost.set(
+          c.dish_id,
+          (dishCost.get(c.dish_id) ?? 0) + Number(c.qty) * Number(ing.last_unit_cost ?? 0),
+        );
+      }
+    }
+    const { data: us } = await db.from("users").select("id,name").eq("restaurant_id", restaurantId);
+    const uname = new Map((us ?? []).map((u) => [u.id, u.name]));
+    for (const s of internas) {
+      const cost = (s.dish_id ? dishCost.get(s.dish_id) ?? 0 : 0) * Number(s.qty);
+      empleadasTotal += cost;
+      empItems.push({
+        name: s.dish_name ?? "—",
+        persona: s.user_id ? uname.get(s.user_id) ?? "—" : "—",
+        cost,
+      });
+    }
+  }
+
   const utilidad = ventas - insumosTotal - productosTotal - gastosTotal - fijosTotal;
 
   return {
@@ -288,6 +333,7 @@ export async function computeDaySummary(
     productos: { total: productosTotal, items: prodItems },
     gastos: { total: gastosTotal, items: gastoItems },
     fijos: { ...fijos, total: fijosTotal },
+    empleadas: { total: empleadasTotal, n: internas?.length ?? 0, items: empItems },
     caja: {
       apertura: aperturaTotal,
       ventasEfectivo,
@@ -377,7 +423,7 @@ export async function computeAnalytics(
     { data: prevSales },
   ] = await Promise.all([
     db.from("sales").select("total,business_date,shift_session_id")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null).eq("consumo_interno", false),
     db.from("shift_sessions").select("id,business_date,shift_id,responsible_user_id,status,cash_discrepancy")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("shifts").select("id,name,sort_order").eq("restaurant_id", restaurantId).eq("active", true).order("sort_order"),
@@ -396,7 +442,7 @@ export async function computeAnalytics(
     db.from("expenses").select("amount,category,note,user_id,business_date")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
     db.from("sales").select("total")
-      .eq("restaurant_id", restaurantId).gte("business_date", prevFrom).lte("business_date", prevTo).is("voided_at", null),
+      .eq("restaurant_id", restaurantId).gte("business_date", prevFrom).lte("business_date", prevTo).is("voided_at", null).eq("consumo_interno", false),
   ]);
 
   const dates = eachDate(from, to);
@@ -684,6 +730,128 @@ export async function computeDishHistory(
 }
 
 // ===========================================================================
+//  ESTADO DE RESULTADOS MENSUAL (por mes) + proyección de punto de equilibrio
+// ===========================================================================
+export interface MonthlyPnL {
+  year: number;
+  month: number; // 1-12
+  daysInMonth: number;
+  daysElapsed: number; // mes en curso = hoy; meses pasados = completo
+  enCurso: boolean;
+  ventas: number;
+  costoDirecto: number;
+  margenContribucion: number;
+  fijoOperativo: number;
+  fijoAdministrativo: number;
+  fijoFinanciero: number;
+  fijoTotal: number;
+  utilidadOperativa: number;
+  utilidadNeta: number;
+  margenRatio: number;
+  ventaDiariaProm: number;
+  puntoEquilibrioDiario: number | null; // venta/día para cubrir los fijos
+  diasParaEquilibrio: number | null; // a la venta diaria actual
+  proyeccion: { dia: number; acumulado: number }[];
+}
+
+export async function computeMonthlyPnL(
+  db: Db,
+  restaurantId: string,
+  year: number,
+  month: number,
+): Promise<MonthlyPnL> {
+  const mm = String(month).padStart(2, "0");
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const from = `${year}-${mm}-01`;
+  const to = `${year}-${mm}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const [{ data: sales }, { data: batches }, { data: moves }, { data: recurring }] =
+    await Promise.all([
+      db.from("sales").select("total")
+        .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to)
+        .is("voided_at", null).eq("consumo_interno", false),
+      db.from("production_batches").select("total_cost")
+        .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
+      db.from("inventory_movements").select("type,qty,unit_cost, ingredients(costing_method)")
+        .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
+      db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active,created_at")
+        .eq("restaurant_id", restaurantId).eq("active", true),
+    ]);
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  let costoDirecto = (batches ?? []).reduce((s, b) => s + Number(b.total_cost), 0);
+  for (const m of moves ?? []) {
+    const ing = m.ingredients as unknown as { costing_method: string } | null;
+    if (m.type === "venta" && ing && ing.costing_method !== "tanda") {
+      costoDirecto += Math.abs(Number(m.qty)) * Number(m.unit_cost);
+    }
+  }
+  const margenContribucion = ventas - costoDirecto;
+
+  // Ocurrencias de cada día de semana en el mes (para costos semanales).
+  const wdCount = [0, 0, 0, 0, 0, 0, 0];
+  for (let d = 1; d <= daysInMonth; d++) wdCount[new Date(year, month - 1, d).getDay()]++;
+
+  // Un costo fijo solo aplica desde el mes en que se registró: no se proyecta
+  // hacia atrás a meses en los que aún no existía (evita utilidades negativas
+  // retroactivas en meses sin actividad).
+  const monthKey = `${year}-${mm}`;
+  const fijos = { operativo: 0, administrativo: 0, financiero: 0 };
+  for (const c of recurring ?? []) {
+    if (String(c.created_at).slice(0, 7) > monthKey) continue;
+    const amount = Number(c.amount);
+    let monto = 0;
+    if (c.schedule_type === "monthly") monto = amount; // el mes completo = el monto, una vez
+    else if (c.schedule_type === "weekly") {
+      const wds = (c.weekdays as number[] | null) ?? [];
+      monto = wds.length ? amount * wds.reduce((s, w) => s + (wdCount[w] ?? 0), 0) : amount * (daysInMonth / 7);
+    } else monto = amount * daysInMonth; // daily
+    if (c.category === "administrativo") fijos.administrativo += monto;
+    else if (c.category === "financiero") fijos.financiero += monto;
+    else fijos.operativo += monto;
+  }
+  const fijoTotal = fijos.operativo + fijos.administrativo + fijos.financiero;
+  const utilidadOperativa = margenContribucion - fijos.operativo - fijos.administrativo;
+  const utilidadNeta = utilidadOperativa - fijos.financiero;
+
+  // Proyección de punto de equilibrio a la venta diaria actual.
+  const hoy = parseLocal(businessDate());
+  const enCurso = hoy.getFullYear() === year && hoy.getMonth() + 1 === month;
+  const daysElapsed = enCurso ? hoy.getDate() : daysInMonth;
+  const margenRatio = ventas > 0 ? margenContribucion / ventas : 0;
+  const ventaDiariaProm = daysElapsed > 0 ? ventas / daysElapsed : 0;
+  const contribDiaria = ventaDiariaProm * margenRatio;
+  const puntoEquilibrioDiario = margenRatio > 0 ? fijoTotal / daysInMonth / margenRatio : null;
+  const diasParaEquilibrio = contribDiaria > 0 ? Math.ceil(fijoTotal / contribDiaria) : null;
+  const proyeccion = Array.from({ length: daysInMonth }, (_, i) => ({
+    dia: i + 1,
+    acumulado: Math.round(((i + 1) * contribDiaria - fijoTotal) * 100) / 100,
+  }));
+
+  return {
+    year,
+    month,
+    daysInMonth,
+    daysElapsed,
+    enCurso,
+    ventas,
+    costoDirecto,
+    margenContribucion,
+    fijoOperativo: fijos.operativo,
+    fijoAdministrativo: fijos.administrativo,
+    fijoFinanciero: fijos.financiero,
+    fijoTotal,
+    utilidadOperativa,
+    utilidadNeta,
+    margenRatio,
+    ventaDiariaProm,
+    puntoEquilibrioDiario,
+    diasParaEquilibrio,
+    proyeccion,
+  };
+}
+
+// ===========================================================================
 //  P&L (rango from..to) + punto de equilibrio
 // ===========================================================================
 export interface PnL {
@@ -710,7 +878,7 @@ export async function computePnL(
 
   const [{ data: sales }, { data: batches }, { data: recurring }] = await Promise.all([
     db.from("sales").select("total")
-      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null),
+      .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to).is("voided_at", null).eq("consumo_interno", false),
     db.from("production_batches").select("total_cost")
       .eq("restaurant_id", restaurantId).gte("business_date", from).lte("business_date", to),
     db.from("recurring_costs").select("amount,category,schedule_type,weekdays,active")

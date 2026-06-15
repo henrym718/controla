@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Sin maximumScale/userScalable: permite hacer zoom con los dedos (accesibilidad).
 };
 
 export default function RootLayout({

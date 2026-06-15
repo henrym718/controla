@@ -298,6 +298,49 @@ export type Database = {
           },
         ]
       }
+      combo_parts: {
+        Row: {
+          combo_dish_id: string
+          part_dish_id: string
+          restaurant_id: string
+          role: string
+        }
+        Insert: {
+          combo_dish_id: string
+          part_dish_id: string
+          restaurant_id: string
+          role?: string
+        }
+        Update: {
+          combo_dish_id?: string
+          part_dish_id?: string
+          restaurant_id?: string
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "combo_parts_combo_dish_id_fkey"
+            columns: ["combo_dish_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "combo_parts_part_dish_id_fkey"
+            columns: ["part_dish_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "combo_parts_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_close: {
         Row: {
           business_date: string
@@ -521,8 +564,11 @@ export type Database = {
       dishes: {
         Row: {
           active: boolean
+          category: string
           created_at: string
           id: string
+          is_combo: boolean
+          is_extra: boolean
           name: string
           price: number
           restaurant_id: string
@@ -530,8 +576,11 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          category?: string
           created_at?: string
           id?: string
+          is_combo?: boolean
+          is_extra?: boolean
           name: string
           price?: number
           restaurant_id: string
@@ -539,8 +588,11 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          category?: string
           created_at?: string
           id?: string
+          is_combo?: boolean
+          is_extra?: boolean
           name?: string
           price?: number
           restaurant_id?: string
@@ -1142,6 +1194,7 @@ export type Database = {
       sales: {
         Row: {
           business_date: string
+          consumo_interno: boolean
           created_at: string
           dish_id: string | null
           dish_name: string | null
@@ -1163,6 +1216,7 @@ export type Database = {
         }
         Insert: {
           business_date?: string
+          consumo_interno?: boolean
           created_at?: string
           dish_id?: string | null
           dish_name?: string | null
@@ -1184,6 +1238,7 @@ export type Database = {
         }
         Update: {
           business_date?: string
+          consumo_interno?: boolean
           created_at?: string
           dish_id?: string | null
           dish_name?: string | null
@@ -1724,6 +1779,17 @@ export type Database = {
         Args: { p_date: string; p_restaurant: string }
         Returns: Json
       }
+      crear_combo: {
+        Args: {
+          p_name?: string
+          p_price?: number
+          p_restaurant: string
+          p_segundo: string
+          p_sopa: string
+          p_user?: string
+        }
+        Returns: Json
+      }
       crear_restaurante: {
         Args: {
           p_admin_name: string
@@ -1804,6 +1870,18 @@ export type Database = {
           p_sale_price?: number
           p_session: string
           p_total_cost: number
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_consumo_interno: {
+        Args: {
+          p_date: string
+          p_dish_id: string
+          p_name: string
+          p_qty?: number
+          p_restaurant: string
+          p_session: string
           p_user: string
         }
         Returns: Json

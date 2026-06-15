@@ -249,12 +249,6 @@ const produccionSchema = z.object({
   total_cost: z.coerce.number().nonnegative(),
   units_produced: z.coerce.number().positive().optional(),
 });
-const procesarSchema = z.object({
-  input_name: z.string().min(1),
-  input_qty: z.coerce.number().positive(),
-  output_name: z.string().min(1),
-  output_units: z.coerce.number().positive().optional(),
-});
 const consumoSchema = z.object({
   ingredient_name: z.string().min(1),
   qty: z.coerce.number().positive(),
@@ -303,6 +297,16 @@ const consultaVentasSchema = z.object({ dish_name: z.string().optional() });
 const anularSchema = z.object({
   tipo: z.enum(["venta", "compra", "gasto", "caja", "cualquiera"]).default("cualquiera"),
   descripcion: z.string().optional(),
+});
+const comboSchema = z.object({
+  sopa_name: z.string().min(1),
+  segundo_name: z.string().min(1),
+  combo_name: z.string().optional(),
+  price: z.coerce.number().positive().optional(),
+});
+const consumoInternoSchema = z.object({
+  dish_name: z.string().min(1),
+  qty: z.coerce.number().int().positive().default(1),
 });
 
 // ---------------------------------------------------------------------------
@@ -426,6 +430,56 @@ export const TOOLS: Record<string, Tool> = {
         dish: dish.name,
       });
       return { message: `✅ "${dish.name}" marcado como agotado hoy.` };
+    },
+  },
+
+  crear_combo: {
+    name: "crear_combo",
+    mode: "write",
+    description:
+      "Arma un COMBO uniendo una sopa y un segundo que YA existen en el catálogo (ej. 'haz un combo con la sopa de bola y el arroz con pollo a 2.50'). La receta y el costo se arman solos uniendo ambos; el precio del combo va luego en el menú del día.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        sopa_name: { type: "STRING", description: "Nombre de la sopa" },
+        segundo_name: { type: "STRING", description: "Nombre del segundo (arroz con algo)" },
+        combo_name: { type: "STRING", description: "Nombre del combo (opcional)" },
+        price: { type: "NUMBER", description: "Precio sugerido del combo (opcional)" },
+      },
+      required: ["sopa_name", "segundo_name"],
+    },
+    validate: (raw) => comboSchema.parse(raw),
+    preview: async (args, ctx) => {
+      const a = comboSchema.parse(args);
+      const sopa = await resolveDish(ctx, a.sopa_name);
+      const seg = await resolveDish(ctx, a.segundo_name);
+      if (!sopa) throw new Error(`No tengo la sopa "${a.sopa_name}" en el catálogo.`);
+      if (!seg) throw new Error(`No tengo el segundo "${a.segundo_name}" en el catálogo.`);
+      const precio = a.price != null ? ` a ${money(a.price)}` : "";
+      return `Armar combo «${a.combo_name?.trim() || `Combo ${seg.name}`}»: ${sopa.name} + ${seg.name}${precio}. ¿Confirmo?`;
+    },
+    execute: async (args, ctx) => {
+      const a = comboSchema.parse(args);
+      const sopa = await resolveDish(ctx, a.sopa_name);
+      const seg = await resolveDish(ctx, a.segundo_name);
+      if (!sopa) throw new Error(`No tengo la sopa "${a.sopa_name}".`);
+      if (!seg) throw new Error(`No tengo el segundo "${a.segundo_name}".`);
+      const { data, error } = await ctx.db.rpc("crear_combo", {
+        p_restaurant: ctx.session.restaurant_id,
+        p_sopa: sopa.id,
+        p_segundo: seg.id,
+        p_name: a.combo_name?.trim() || undefined,
+        p_price: a.price ?? undefined,
+        p_user: ctx.session.user_id,
+      });
+      if (error) throw new Error(error.message);
+      const d = data as { name?: string } | null;
+      await logEvent(ctx, "plato_config", `Armó el combo ${d?.name ?? "nuevo"}`, {
+        combo: d?.name,
+      });
+      return {
+        message: `✅ Combo «${d?.name ?? "nuevo"}» armado. Agrégalo al menú con su precio.`,
+      };
     },
   },
 
@@ -671,79 +725,51 @@ export const TOOLS: Record<string, Tool> = {
     },
   },
 
-  procesar_insumo: {
-    name: "procesar_insumo",
+  consumir_interno: {
+    name: "consumir_interno",
     mode: "write",
     description:
-      "Convierte un insumo CRUDO en otro consumiendo su stock: ej. 'de 2 pollos salieron 28 presas', 'de 20 dedos de verde salieron 20 tortillas'. Si dicen cuántas unidades salieron, la salida es contable (costo exacto por unidad); si no, va a granel (pool del día). HEREDA el costo del crudo — NO preguntes el costo.",
+      "Registra la COMIDA DE UNA EMPLEADA (consumo interno, gratis): ej. 'voy a comer mi almuerzo', 'me sirvo un seco de pollo', 'consumo el combo del día'. Se registra a $0 a nombre de quien habla: descuenta la proteína del stock y entra al pool, pero NO es venta. Usa el nombre del plato/sopa/combo del menú o catálogo.",
     parameters: {
       type: "OBJECT",
       properties: {
-        input_name: { type: "STRING", description: "Insumo crudo usado (pollo, libra de carne, dedo de verde)" },
-        input_qty: { type: "NUMBER", description: "Cuánto del crudo se usó" },
-        output_name: { type: "STRING", description: "Qué salió (presa, tajada, tortilla)" },
-        output_units: { type: "NUMBER", description: "Cuántas unidades salieron (omitir si es a granel)" },
+        dish_name: { type: "STRING", description: "Plato, sopa o combo que come la empleada" },
+        qty: { type: "NUMBER", description: "Cuántos (por defecto 1)" },
       },
-      required: ["input_name", "input_qty", "output_name"],
+      required: ["dish_name"],
     },
-    validate: (raw) => procesarSchema.parse(raw),
+    validate: (raw) => consumoInternoSchema.parse(raw),
     preview: async (args, ctx) => {
-      const a = procesarSchema.parse(args);
-      const inp = await resolveIngredient(ctx, a.input_name);
-      if (!inp) throw new Error(`No conozco "${a.input_name}". Regístralo como compra primero.`);
-      const cost = a.input_qty * Number(inp.last_unit_cost ?? 0);
-      return a.output_units
-        ? `Procesar: ${a.input_qty} × ${inp.name} → ${a.output_units} × ${a.output_name} (costo ${money(cost)}, ${money(cost / a.output_units)} c/u). ¿Confirmo?`
-        : `Procesar a granel: ${a.input_qty} × ${inp.name} → ${a.output_name} (${money(cost)} al pool). ¿Confirmo?`;
+      const a = consumoInternoSchema.parse(args);
+      const dish = await resolveDish(ctx, a.dish_name);
+      if (!dish) throw new Error(`No tengo "${a.dish_name}" en el catálogo.`);
+      return `Consumo de empleada (${ctx.session.user_name}): ${a.qty} × ${dish.name}, gratis (va como costo). ¿Confirmo?`;
     },
     execute: async (args, ctx) => {
-      const a = procesarSchema.parse(args);
-      const inp = await resolveIngredient(ctx, a.input_name);
-      if (!inp) throw new Error(`No conozco "${a.input_name}".`);
-      if (inp.kind !== "contable")
-        throw new Error(`${inp.name} es a granel; no se procesa por unidades.`);
-
-      const contable = a.output_units != null;
-      let out = await resolveIngredient(ctx, a.output_name);
-      if (!out) {
-        const { data: created } = await ctx.db
-          .from("ingredients")
-          .insert({
-            restaurant_id: ctx.session.restaurant_id,
-            name: a.output_name,
-            kind: contable ? "contable" : "granel",
-            costing_method: contable ? "tanda" : "pool",
-            consumption_unit: contable ? "unidad" : null,
-          })
-          .select("id,name,kind,costing_method,last_unit_cost,is_disposable,is_sellable,sale_price")
-          .single();
-        out = created ?? null;
-      }
-      if (!out) throw new Error("No pude registrar la salida.");
-
-      const { data, error } = await ctx.db.rpc("procesar_insumo", {
+      const a = consumoInternoSchema.parse(args);
+      const dish = await resolveDish(ctx, a.dish_name);
+      if (!dish) throw new Error(`No tengo "${a.dish_name}" en el catálogo.`);
+      const { data, error } = await ctx.db.rpc("registrar_consumo_interno", {
         p_restaurant: ctx.session.restaurant_id,
         p_session: ctx.session.shift_session_id,
         p_user: ctx.session.user_id,
         p_date: businessDate(),
-        p_input_id: inp.id,
-        p_input_qty: a.input_qty,
-        p_output_id: out.id,
-        p_output_units: a.output_units,
+        p_dish_id: dish.id,
+        p_name: dish.name,
+        p_qty: a.qty,
       });
       if (error) throw new Error(error.message);
-      const d = data as { cost?: number; unit_cost?: number } | null;
+      const d = data as { op_id?: string } | null;
       await logEvent(
         ctx,
-        "procesar",
-        a.output_units
-          ? `Procesó ${a.input_qty} × ${inp.name} → ${a.output_units} × ${out.name}`
-          : `Procesó ${a.input_qty} × ${inp.name} → ${out.name} (a granel)`,
-        { input: inp.name, input_qty: a.input_qty, output: out.name, output_units: a.output_units ?? null },
+        "consumo",
+        `Consumo de empleada: ${a.qty} × ${dish.name} (${ctx.session.user_name})`,
+        { dish: dish.name, qty: a.qty, interno: true },
+        d?.op_id ?? null,
       );
-      return a.output_units
-        ? { message: `✅ Procesado: ${a.output_units} × ${out.name} (${money(Number(d?.unit_cost ?? 0))} c/u).` }
-        : { message: `✅ ${out.name} a granel: +${money(Number(d?.cost ?? 0))} al pool.` };
+      return {
+        message: `✅ Anotado: ${a.qty} × ${dish.name} como consumo de ${ctx.session.user_name}.`,
+      };
     },
   },
 
@@ -1166,7 +1192,8 @@ export const TOOLS: Record<string, Tool> = {
         .from("sales")
         .select("qty,total,dish_name")
         .eq("shift_session_id", ctx.session.shift_session_id)
-        .is("voided_at", null);
+        .is("voided_at", null)
+        .eq("consumo_interno", false);
       let rows = data ?? [];
       if (a.dish_name) {
         const n = a.dish_name.toLowerCase();

@@ -46,8 +46,11 @@ alter table ingredients
 --  VENTA de PLATO o de PRODUCTO de inventario
 -- ----------------------------------------------------------------------------
 alter table sales
-  add column if not exists item_kind     text not null default 'plato',
-  add column if not exists ingredient_id uuid references ingredients(id);
+  add column if not exists item_kind       text not null default 'plato',
+  add column if not exists ingredient_id   uuid references ingredients(id),
+  -- Consumo interno = comida de empleada: plato a $0 a su nombre. Descuenta su
+  -- proteína y participa del pool, pero NO es ingreso. Se reporta como costo.
+  add column if not exists consumo_interno boolean not null default false;
 alter table sales
   add constraint sales_item_kind_chk check (item_kind in ('plato', 'producto'));
 
@@ -299,3 +302,93 @@ grant execute on function registrar_venta(uuid, uuid, uuid, date, text, uuid, uu
 grant execute on function registrar_gasto(uuid, uuid, uuid, date, numeric, text, text, text) to service_role;
 grant execute on function registrar_compra(uuid, uuid, uuid, date, uuid, text, numeric, numeric, numeric, text) to service_role;
 grant execute on function fijar_menu(uuid, date, uuid, uuid, jsonb) to service_role;
+
+-- ============================================================================
+--  COMBOS (sopa + segundo) + ADICIONALES
+--   Un combo es UN plato más (is_combo) cuya RECETA = unión de la receta de la
+--   sopa y la del segundo → participa en ambos pools al cierre (cerrar_dia ya
+--   reparte cada pool solo entre los platos cuya receta lleva ese insumo). El
+--   precio del combo vive en daily_menu. Adicional = plato chico (is_extra).
+-- ============================================================================
+alter table dishes
+  add column if not exists is_combo boolean not null default false,
+  add column if not exists is_extra boolean not null default false,
+  -- Categoría del plato individual (para agrupar en el catálogo): segundo/principal o sopa.
+  add column if not exists category text not null default 'principal';
+
+create table if not exists combo_parts (
+  restaurant_id uuid not null references restaurants(id) on delete cascade,
+  combo_dish_id uuid not null references dishes(id) on delete cascade,
+  part_dish_id  uuid not null references dishes(id) on delete cascade,
+  role          text not null default 'segundo' check (role in ('sopa', 'segundo')),
+  primary key (combo_dish_id, part_dish_id)
+);
+create index if not exists idx_combo_parts_combo on combo_parts(combo_dish_id);
+
+alter table combo_parts enable row level security;
+create policy combo_parts_all on combo_parts for all
+  using (restaurant_id = app.restaurant_id())
+  with check (restaurant_id = app.restaurant_id());
+
+create or replace function crear_combo(
+  p_restaurant uuid,
+  p_sopa       uuid,
+  p_segundo    uuid,
+  p_name       text default null,
+  p_price      numeric default null,
+  p_user       uuid default null
+) returns jsonb
+  language plpgsql
+  security definer
+  set search_path = public, app
+as $$
+declare
+  v_sopa_name text;
+  v_seg_name  text;
+  v_name      text;
+  v_combo     uuid;
+begin
+  select name into v_sopa_name from dishes
+   where id = p_sopa and restaurant_id = p_restaurant;
+  select name into v_seg_name from dishes
+   where id = p_segundo and restaurant_id = p_restaurant;
+  if v_sopa_name is null or v_seg_name is null then
+    raise exception 'La sopa o el segundo no existen en este restaurante';
+  end if;
+  if p_sopa = p_segundo then
+    raise exception 'La sopa y el segundo deben ser platos distintos';
+  end if;
+
+  v_name := coalesce(nullif(btrim(p_name), ''), 'Combo ' || v_seg_name);
+
+  insert into dishes (restaurant_id, name, price, is_combo)
+  values (p_restaurant, v_name, coalesce(p_price, 0), true)
+  on conflict (restaurant_id, name)
+  do update set is_combo = true,
+                active   = true,
+                price    = coalesce(p_price, dishes.price)
+  returning id into v_combo;
+
+  delete from combo_parts where combo_dish_id = v_combo;
+  insert into combo_parts (restaurant_id, combo_dish_id, part_dish_id, role)
+  values (p_restaurant, v_combo, p_sopa, 'sopa'),
+         (p_restaurant, v_combo, p_segundo, 'segundo');
+
+  delete from dish_components where dish_id = v_combo;
+  insert into dish_components (restaurant_id, dish_id, ingredient_id, qty)
+  select p_restaurant, v_combo, dc.ingredient_id, sum(dc.qty)
+  from dish_components dc
+  where dc.dish_id in (p_sopa, p_segundo)
+  group by dc.ingredient_id;
+
+  insert into audit_log (restaurant_id, user_id, action, entity, entity_id, payload)
+  values (p_restaurant, p_user, 'crear_combo', 'dishes', v_combo,
+          jsonb_build_object('name', v_name, 'sopa', v_sopa_name,
+                             'segundo', v_seg_name, 'price', p_price));
+
+  return jsonb_build_object('combo_dish_id', v_combo, 'name', v_name);
+end;
+$$;
+
+revoke execute on function crear_combo(uuid, uuid, uuid, text, numeric, uuid) from public;
+grant  execute on function crear_combo(uuid, uuid, uuid, text, numeric, uuid) to service_role;

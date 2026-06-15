@@ -29,13 +29,16 @@ function buildSystem(
     "- Usa una herramienta cuando la intención sea clara. Si falta un dato esencial, pregúntalo en una frase.",
     "- Si la usuaria dicta VARIAS cosas en un mismo mensaje (ej. 'ingresa 20 gaseosas a $5 y también 100 discos de empanada a $20'), devuelve TODAS las llamadas a funciones necesarias, UNA por cada acción. No te quedes solo con la primera.",
     "- VENDER: usa el precio del MENÚ DE HOY. Si el plato no está en el menú ni en el catálogo, pregunta si se agrega y a qué precio. SIEMPRE confirma el precio, aunque ya esté en el catálogo.",
+    "- COMBO (sopa + segundo juntos a precio especial): aparece en el MENÚ DE HOY marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden SOLO la sopa o SOLO el segundo, vende cada uno por separado con su precio individual.",
+    "- ADICIONAL (huevo extra, porción): aparece marcado '(adicional)'. Véndelo como una venta más; descuenta su insumo solo.",
+    "- ARMAR un combo nuevo (no venderlo): usa crear_combo con la sopa y el segundo que ya existen en el catálogo.",
     "- Las colas/bebidas y demás PRODUCTOS del inventario se venden directo y descuentan stock.",
     "- 'Para llevar': se consume un envase (lonchera, bandeja, vaso). Si no está claro cuál, pregúntalo.",
     "- GASTO (servilletas, escoba, gas, servicios) NO es inventario → usa registrar_gasto. COMPRA de algo que ENTRA al inventario (arroz, aceite, colas) → usa registrar_compra.",
     "- En gastos y compras, pregunta si el dinero salió de la CAJA o lo puso la JEFA (fuente_pago).",
     "- Producción: si dicen cuántas unidades salieron (presas, bolsitas) es contable; si no (arroz, sopa), es a granel.",
-    "- PROCESAR un crudo (ej. 'de 2 pollos salieron 28 presas', 'de 20 dedos salieron 20 tortillas') → usa procesar_insumo: consume el crudo del inventario y hereda su costo. NO preguntes el costo. Con unidades = contable; sin unidades = granel.",
     "- CONSUMO del día para cocinar, sin venderlo y sin nombrar un resultado (ej. 'consumimos 4 tomates', 'usamos 10 huevos hoy') → usa consumir_insumo: baja el stock y suma su costo al pool/costo del día de HOY. NO preguntes el costo.",
+    "- COMIDA DE EMPLEADA (consumo interno, gratis): ej. 'voy a comer mi almuerzo', 'me sirvo un seco', 'consumo el combo' → usa consumir_interno con el plato/sopa/combo. Se registra a $0 a su nombre (descuenta su proteína, entra al pool, NO es venta).",
     "- Al COMPRAR algo que YA existe en el inventario, NO vuelvas a preguntar el precio de venta (ya está guardado) ni el costo unitario: el costo se promedia solo con lo que había.",
     "- Para retiros de caja o de inventario, el motivo es obligatorio.",
     "- ANULAR/REVERSAR (ej. 'anula la última venta', 'devolvieron las 2 colas', 'reversa la compra de arroz') → usa anular_operacion con el tipo (venta/compra/gasto/caja) y una pista de cuál. Pedirá el PIN de administradora al confirmar.",
@@ -92,7 +95,7 @@ export async function POST(req: Request) {
   const [{ data: menuRows }, { data: dishes }, { data: ings }] = await Promise.all([
     db
       .from("daily_menu")
-      .select("price,available,dishes(name)")
+      .select("price,available,dishes(name,is_combo,is_extra)")
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", today)
       .eq("shift_id", session.shift_id)
@@ -113,8 +116,9 @@ export async function POST(req: Request) {
     (menuRows ?? [])
       .filter((m) => m.available)
       .map((m) => {
-        const d = m.dishes as unknown as { name: string } | null;
-        return `- ${d?.name ?? "?"}: $${Number(m.price).toFixed(2)}`;
+        const d = m.dishes as unknown as { name: string; is_combo: boolean; is_extra: boolean } | null;
+        const tag = d?.is_combo ? " (combo)" : d?.is_extra ? " (adicional)" : "";
+        return `- ${d?.name ?? "?"}${tag}: $${Number(m.price).toFixed(2)}`;
       })
       .join("\n") || "(sin menú fijado para este turno)";
   const productos =

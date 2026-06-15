@@ -780,3 +780,60 @@ grant execute on function anular_operacion(uuid, uuid, text, uuid)              
 grant execute on function editar_producto(uuid, uuid, uuid, date, uuid, text, numeric, numeric, numeric, text, text) to service_role;
 grant execute on function eliminar_producto(uuid, uuid)                                        to service_role;
 grant execute on function operaciones_reversibles(uuid, date, date)                            to service_role;
+
+-- ============================================================================
+--  RPC · registrar_consumo_interno (comida de empleada = plato a $0 a su nombre)
+--   Descuenta la proteína (contables de la receta) y participa del pool (es una
+--   venta más para cerrar_dia), pero con total 0 y marca consumo_interno → los
+--   reportes lo excluyen del INGRESO y lo muestran como costo "Consumo de
+--   empleadas". Reversible por op_id como cualquier venta.
+-- ============================================================================
+create or replace function registrar_consumo_interno(
+  p_restaurant uuid,
+  p_session    uuid,
+  p_user       uuid,
+  p_date       date,
+  p_dish_id    uuid,
+  p_name       text,
+  p_qty        integer default 1
+) returns jsonb
+  language plpgsql
+  security definer
+  set search_path = public, app
+as $$
+declare
+  v_sale_id uuid;
+  v_op      uuid := gen_random_uuid();
+  r         record;
+begin
+  insert into sales (restaurant_id, shift_session_id, user_id, business_date,
+                     item_kind, dish_id, dish_name, qty, unit_price, total,
+                     service_type, payment_method, consumo_interno, op_id)
+  values (p_restaurant, p_session, p_user, p_date,
+          'plato', p_dish_id, p_name, p_qty, 0, 0,
+          'servir', 'efectivo', true, v_op)
+  returning id into v_sale_id;
+
+  -- Proteína / contables de la receta (el granel va al pool por la venta).
+  for r in
+    select dc.qty, i.id as ing_id, i.last_unit_cost
+    from dish_components dc
+    join ingredients i on i.id = dc.ingredient_id
+    where dc.dish_id = p_dish_id and i.kind = 'contable'
+  loop
+    insert into inventory_movements (restaurant_id, ingredient_id, shift_session_id,
+                                     business_date, type, qty, unit_cost, ref_table, ref_id, op_id)
+    values (p_restaurant, r.ing_id, p_session, p_date, 'venta',
+            -(r.qty * p_qty), coalesce(r.last_unit_cost, 0), 'sales', v_sale_id, v_op);
+  end loop;
+
+  insert into audit_log (restaurant_id, user_id, shift_session_id, action, entity, entity_id, payload)
+  values (p_restaurant, p_user, p_session, 'consumo_interno', 'sales', v_sale_id,
+          jsonb_build_object('name', p_name, 'qty', p_qty, 'op_id', v_op));
+
+  return jsonb_build_object('sale_id', v_sale_id, 'op_id', v_op);
+end;
+$$;
+
+revoke all on function registrar_consumo_interno(uuid, uuid, uuid, date, uuid, text, integer) from public;
+grant execute on function registrar_consumo_interno(uuid, uuid, uuid, date, uuid, text, integer) to service_role;

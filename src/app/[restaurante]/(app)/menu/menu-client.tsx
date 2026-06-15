@@ -13,7 +13,14 @@ interface DishRow {
   inMenu: boolean;
   price: number;
   available: boolean;
+  kind: "plato" | "combo" | "extra";
 }
+
+const KIND_TAG: Record<DishRow["kind"], { label: string; cls: string } | null> = {
+  plato: null,
+  combo: { label: "combo", cls: "bg-mint" },
+  extra: { label: "adicional", cls: "bg-peach" },
+};
 interface ShiftOpt {
   id: string;
   name: string;
@@ -134,13 +141,25 @@ export default function MenuClient({
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
-          Agregar del catálogo
-        </p>
-        {fuera.map((d) => (
-          <Row key={d.id} dish={d} date={date} shiftId={shiftId} />
-        ))}
+      <div className="flex flex-col gap-4">
+        {(
+          [
+            { label: "Platos", items: fuera.filter((d) => d.kind === "plato") },
+            { label: "Combos", items: fuera.filter((d) => d.kind === "combo") },
+            { label: "Adicionales", items: fuera.filter((d) => d.kind === "extra") },
+          ] as const
+        ).map((g) =>
+          g.items.length === 0 ? null : (
+            <div key={g.label} className="flex flex-col gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+                Agregar — {g.label}
+              </p>
+              {g.items.map((d) => (
+                <Row key={d.id} dish={d} date={date} shiftId={shiftId} />
+              ))}
+            </div>
+          ),
+        )}
         {fuera.length === 0 && (
           <p className="text-sm opacity-50">Todo el catálogo ya está en el menú.</p>
         )}
@@ -214,7 +233,16 @@ function Row({
         dish.inMenu && !dish.available ? "border-ink/10 bg-ink/[0.03] opacity-60" : "border-ink/10"
       }`}
     >
-      <span className="flex-1 text-sm font-medium">{dish.name}</span>
+      <span className="flex flex-1 items-center gap-1.5 text-sm font-medium">
+        {dish.name}
+        {KIND_TAG[dish.kind] && (
+          <span
+            className={`rounded-full ${KIND_TAG[dish.kind]!.cls} px-2 py-0.5 text-[10px] font-semibold`}
+          >
+            {KIND_TAG[dish.kind]!.label}
+          </span>
+        )}
+      </span>
       <span className="text-sm opacity-40">$</span>
       <input
         value={price}
