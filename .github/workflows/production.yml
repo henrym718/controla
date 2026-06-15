@@ -16,9 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Versión fija (no "latest"): "latest" obliga a resolver la última release
+      # por la API de GitHub, que a veces responde 504 y rompe el deploy. Fijarla
+      # hace el pipeline reproducible. Subir el número cuando haga falta.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.106.0
 
       # Usamos la URL del SESSION POOLER (IPv4) para evitar el problema de IPv6
       # de la conexión directa a la base desde los runners de GitHub.
