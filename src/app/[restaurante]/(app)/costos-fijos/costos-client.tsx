@@ -10,6 +10,7 @@ interface Costo {
   amount: number;
   category: string;
   scheduleType: string;
+  effectiveFrom: string;
 }
 
 const selectCls =
@@ -20,8 +21,15 @@ const CAT: Record<string, string> = {
   administrativo: "administrativo",
   financiero: "financiero",
 };
+const MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
-export default function CostosClient({ costs }: { costs: Costo[] }) {
+function fmtDesde(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  return `${d} ${MES_CORTO[m - 1]} ${y}`;
+}
+
+export default function CostosClient({ costs, hoy }: { costs: Costo[]; hoy: string }) {
   const [showAdd, setShowAdd] = useState(false);
   const [, start] = useTransition();
 
@@ -52,6 +60,7 @@ export default function CostosClient({ costs }: { costs: Costo[] }) {
                 ${c.amount.toFixed(2)} · {FREQ[c.scheduleType] ?? c.scheduleType} ·{" "}
                 {CAT[c.category] ?? c.category}
               </p>
+              <p className="text-xs opacity-40">Vigente desde {fmtDesde(c.effectiveFrom)}</p>
             </div>
             <button
               onClick={() => {
@@ -65,16 +74,17 @@ export default function CostosClient({ costs }: { costs: Costo[] }) {
         </Card>
       ))}
 
-      {showAdd && <AddCostoModal onClose={() => setShowAdd(false)} />}
+      {showAdd && <AddCostoModal hoy={hoy} onClose={() => setShowAdd(false)} />}
     </div>
   );
 }
 
-function AddCostoModal({ onClose }: { onClose: () => void }) {
+function AddCostoModal({ hoy, onClose }: { hoy: string; onClose: () => void }) {
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("operativo");
   const [scheduleType, setScheduleType] = useState("monthly");
+  const [effectiveFrom, setEffectiveFrom] = useState(hoy);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -83,7 +93,7 @@ function AddCostoModal({ onClose }: { onClose: () => void }) {
     const amt = Number(amount);
     if (!name.trim() || !amt) return setMsg("Completa nombre y monto.");
     start(async () => {
-      const r = await crearCosto({ name: name.trim(), amount: amt, category, scheduleType });
+      const r = await crearCosto({ name: name.trim(), amount: amt, category, scheduleType, effectiveFrom });
       if (r.error) setMsg(r.error);
       else onClose();
     });
@@ -121,6 +131,12 @@ function AddCostoModal({ onClose }: { onClose: () => void }) {
               <option value="financiero">Financiero (préstamos)</option>
             </select>
           </Field>
+          <Field label="Vigente desde">
+            <Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} max={hoy} />
+          </Field>
+          <p className="-mt-1 text-xs opacity-50">
+            Desde cuándo cuenta este costo. Si tu negocio ya operaba antes, elige una fecha anterior.
+          </p>
           <Button onClick={crear} disabled={pending}>
             {pending ? "Guardando…" : "Agregar costo"}
           </Button>

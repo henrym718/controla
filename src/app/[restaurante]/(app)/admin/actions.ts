@@ -238,8 +238,13 @@ export async function crearCosto(input: {
   category: string;
   scheduleType: string;
   dayOfMonth?: number | null;
+  effectiveFrom?: string;
 }): Promise<ActionResult> {
   const { session, db } = await admin();
+  // Vigente desde: la fecha que elija el admin, o hoy (hora del negocio).
+  const effectiveFrom = /^\d{4}-\d{2}-\d{2}$/.test(input.effectiveFrom ?? "")
+    ? input.effectiveFrom!
+    : businessDate();
   const { error } = await db.from("recurring_costs").insert({
     restaurant_id: session.restaurant_id,
     name: input.name,
@@ -247,6 +252,7 @@ export async function crearCosto(input: {
     category: input.category,
     schedule_type: input.scheduleType,
     day_of_month: input.dayOfMonth || null,
+    effective_from: effectiveFrom,
   });
   if (error) return { error: error.message };
   await logAdmin(
