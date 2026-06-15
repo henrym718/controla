@@ -26,7 +26,7 @@ export default async function MenuPage({
   const [{ data: dishes }, { data: menu }, { data: shifts }] = await Promise.all([
     db
       .from("dishes")
-      .select("id,name,price")
+      .select("id,name,price,is_combo,is_extra")
       .eq("restaurant_id", session.restaurant_id)
       .eq("active", true)
       .order("name"),
@@ -66,6 +66,7 @@ export default async function MenuPage({
           inMenu: !!inMenu,
           price: inMenu?.price ?? Number(d.price),
           available: inMenu?.available ?? true,
+          kind: d.is_combo ? ("combo" as const) : d.is_extra ? ("extra" as const) : ("plato" as const),
         };
       })}
     />

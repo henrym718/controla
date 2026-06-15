@@ -333,12 +333,23 @@ export async function cerrarTurnoAction(
 /** Cierre diario: aplica la merma % del granel y prorratea (RPC cerrar_dia). */
 export async function cerrarDiaAction(
   merma: Record<string, number>,
-): Promise<void> {
+): Promise<{ error?: string }> {
   const session = await getSession();
   if (!session) redirect("/");
 
   const db = createAdminClient();
   const date = businessDate();
+
+  // No cerrar un día que nadie abrió (sin turno = sin actividad).
+  const { count: nSesiones } = await db
+    .from("shift_sessions")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", session.restaurant_id)
+    .eq("business_date", date);
+  if (!nSesiones) {
+    return { error: "Nadie abrió turno este día; no hay nada que cerrar." };
+  }
+
   await db.rpc("cerrar_dia", {
     p_restaurant: session.restaurant_id,
     p_date: date,
@@ -375,5 +386,5 @@ export async function cerrarDiaAction(
     }
   }
 
-  redirect(`/${session.slug}/resumen`);
+  return {};
 }

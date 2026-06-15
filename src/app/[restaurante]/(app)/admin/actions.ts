@@ -277,12 +277,14 @@ export async function eliminarCosto(id: string): Promise<ActionResult> {
 export async function crearPlato(input: {
   name: string;
   price: number;
+  category?: string;
 }): Promise<ActionResult> {
   const { session, db } = await admin();
   const { error } = await db.from("dishes").insert({
     restaurant_id: session.restaurant_id,
     name: input.name,
     price: input.price,
+    category: input.category === "sopa" ? "sopa" : "principal",
   });
   if (error) return { error: error.message };
   await logAdmin(session, db, "plato_config", `Creó el plato ${input.name} (${money(input.price)})`, {
@@ -295,12 +297,17 @@ export async function crearPlato(input: {
 
 export async function actualizarPlato(
   id: string,
-  input: { name: string; price: number; active: boolean },
+  input: { name: string; price: number; active: boolean; category?: string },
 ): Promise<ActionResult> {
   const { session, db } = await admin();
   const { error } = await db
     .from("dishes")
-    .update({ name: input.name, price: input.price, active: input.active })
+    .update({
+      name: input.name,
+      price: input.price,
+      active: input.active,
+      ...(input.category ? { category: input.category === "sopa" ? "sopa" : "principal" } : {}),
+    })
     .eq("id", id)
     .eq("restaurant_id", session.restaurant_id);
   if (error) return { error: error.message };
@@ -334,6 +341,124 @@ export async function eliminarPlato(id: string): Promise<ActionResult> {
     return { error: "Tiene historial; se desactivó en lugar de borrar." };
   }
   await logAdmin(session, db, "plato_config", `Eliminó el plato ${nombre}`);
+  revalidatePath(`/${session.slug}/catalogo`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- Combos (sopa + segundo)
+//  Un combo es UN plato más (is_combo). El RPC arma su receta uniendo la de la
+//  sopa y la del segundo, así participa en ambos pools al cerrar el día. El
+//  precio del combo se fija luego en el menú del día.
+export async function crearCombo(input: {
+  sopaId: string;
+  segundoId: string;
+  name?: string;
+  price?: number | null;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!input.sopaId || !input.segundoId) return { error: "Elige la sopa y el segundo." };
+  if (input.sopaId === input.segundoId)
+    return { error: "La sopa y el segundo deben ser platos distintos." };
+
+  const { data, error } = await db.rpc("crear_combo", {
+    p_restaurant: session.restaurant_id,
+    p_sopa: input.sopaId,
+    p_segundo: input.segundoId,
+    p_name: input.name?.trim() || undefined,
+    p_price: input.price ?? undefined,
+    p_user: session.user_id,
+  });
+  if (error) return { error: error.message };
+  const d = data as { name?: string } | null;
+  await logAdmin(session, db, "plato_config", `Armó el combo ${d?.name ?? "nuevo"}`, {
+    combo: d?.name,
+  });
+  revalidatePath(`/${session.slug}/catalogo`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- Receta de un plato (insumos que lleva)
+//  Asigna del inventario qué consume cada plato (proteína, pan, queso…). Los
+//  contables se descuentan al vender; los granel marcan que el plato participa
+//  de ese pool. Reemplaza la receta completa (borra + inserta).
+export async function setReceta(
+  dishId: string,
+  components: { ingredientId: string; qty: number }[],
+): Promise<ActionResult> {
+  const { session, db } = await admin();
+  await db
+    .from("dish_components")
+    .delete()
+    .eq("restaurant_id", session.restaurant_id)
+    .eq("dish_id", dishId);
+
+  const rows = components
+    .filter((c) => c.ingredientId && c.qty > 0)
+    .map((c) => ({
+      restaurant_id: session.restaurant_id,
+      dish_id: dishId,
+      ingredient_id: c.ingredientId,
+      qty: c.qty,
+    }));
+  if (rows.length) {
+    const { error } = await db.from("dish_components").insert(rows);
+    if (error) return { error: error.message };
+  }
+
+  const nombre = await nombreDe(db, "dishes", dishId);
+  await logAdmin(
+    session,
+    db,
+    "receta",
+    `Definió la receta de ${nombre} (${rows.length} insumo${rows.length === 1 ? "" : "s"})`,
+    { dish: nombre, count: rows.length },
+  );
+  revalidatePath(`/${session.slug}/catalogo`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- Adicionales (huevo extra, porción…)
+//  Plato chico (is_extra) con su precio y, opcional, el insumo CONTABLE que
+//  descuenta al venderse (1 huevo, 1 tajada). Si no se indica insumo, es un
+//  adicional de solo ingreso (sin costo rastreado).
+export async function crearAdicional(input: {
+  name: string;
+  price: number;
+  ingredientId?: string | null;
+  qty?: number | null;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!input.name.trim() || !(input.price > 0)) return { error: "Completa nombre y precio." };
+
+  const { data: dish, error } = await db
+    .from("dishes")
+    .insert({
+      restaurant_id: session.restaurant_id,
+      name: input.name.trim(),
+      price: input.price,
+      is_extra: true,
+    })
+    .select("id")
+    .single();
+  if (error || !dish) return { error: error?.message ?? "No pude crear el adicional." };
+
+  if (input.ingredientId) {
+    const { error: ce } = await db.from("dish_components").insert({
+      restaurant_id: session.restaurant_id,
+      dish_id: dish.id,
+      ingredient_id: input.ingredientId,
+      qty: input.qty && input.qty > 0 ? input.qty : 1,
+    });
+    if (ce) return { error: ce.message };
+  }
+
+  await logAdmin(
+    session,
+    db,
+    "plato_config",
+    `Creó el adicional ${input.name.trim()} (${money(input.price)})`,
+    { name: input.name.trim(), price: input.price },
+  );
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
 }
@@ -441,71 +566,6 @@ export async function registrarConteoAction(
   );
   revalidatePath(`/${session.slug}/conteo`);
   return { faltante };
-}
-
-// ---------------------------------------------------------------- Procesar insumo (crudo → procesado)
-export async function procesarInsumoAction(input: {
-  inputId: string;
-  inputQty: number;
-  outputName: string;
-  outputUnits?: number | null;
-}): Promise<ActionResult> {
-  const { session, db } = await admin();
-  if (!input.inputId || !input.inputQty || input.inputQty <= 0) {
-    return { error: "Indica el insumo de origen y cuánto se usó." };
-  }
-  if (!input.outputName.trim()) return { error: "Indica qué salió (presa, tajada, tortilla…)." };
-
-  // resolver/crear el insumo de salida
-  const contable = input.outputUnits != null && input.outputUnits > 0;
-  const { data: existing } = await db
-    .from("ingredients")
-    .select("id")
-    .eq("restaurant_id", session.restaurant_id)
-    .ilike("name", input.outputName.trim())
-    .limit(1);
-
-  let outId = existing?.[0]?.id;
-  if (!outId) {
-    const { data: created, error } = await db
-      .from("ingredients")
-      .insert({
-        restaurant_id: session.restaurant_id,
-        name: input.outputName.trim(),
-        kind: contable ? "contable" : "granel",
-        costing_method: contable ? "tanda" : "pool",
-        consumption_unit: contable ? "unidad" : null,
-      })
-      .select("id")
-      .single();
-    if (error) return { error: error.message };
-    outId = created?.id;
-  }
-  if (!outId) return { error: "No pude registrar la salida." };
-
-  const { error } = await db.rpc("procesar_insumo", {
-    p_restaurant: session.restaurant_id,
-    p_session: session.shift_session_id,
-    p_user: session.user_id,
-    p_date: businessDate(),
-    p_input_id: input.inputId,
-    p_input_qty: input.inputQty,
-    p_output_id: outId,
-    p_output_units: input.outputUnits ?? undefined,
-  });
-  if (error) return { error: error.message };
-  const inputName = await nombreDe(db, "ingredients", input.inputId);
-  await logAdmin(
-    session,
-    db,
-    "procesar",
-    input.outputUnits
-      ? `Procesó ${input.inputQty} × ${inputName} → ${input.outputUnits} × ${input.outputName.trim()}`
-      : `Procesó ${input.inputQty} × ${inputName} → ${input.outputName.trim()} (a granel)`,
-    { input: inputName, input_qty: input.inputQty, output: input.outputName.trim() },
-  );
-  revalidatePath(`/${session.slug}/inventario`);
-  return { ok: true };
 }
 
 /** Valida el PIN de administradora con login_pin. Devuelve true si es admin. */

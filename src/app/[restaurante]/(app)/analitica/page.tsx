@@ -47,32 +47,10 @@ export default async function AnaliticaPage({
       <DateRangePicker />
       <p className="-mt-3 text-xs opacity-50">{range.label} · {range.from} → {range.to}</p>
 
-      {/* SALUD FINANCIERA */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-3xl bg-mint p-4">
-          <p className="text-xs font-medium opacity-60">Ventas</p>
-          <p className="text-2xl font-bold">{money(a.ventas)}</p>
-          {a.ventasDeltaPct != null && (
-            <p className={`text-xs font-semibold ${a.ventasDeltaPct >= 0 ? "text-teal" : "text-coral"}`}>
-              {a.ventasDeltaPct >= 0 ? "▲" : "▼"} {Math.abs(a.ventasDeltaPct).toFixed(0)}% vs periodo anterior
-            </p>
-          )}
-        </div>
-        <div className="rounded-3xl bg-ink p-4 text-white">
-          <p className="text-xs font-medium text-white/60">Utilidad neta real</p>
-          <p className={`text-2xl font-bold ${a.utilidadNeta >= 0 ? "text-teal" : "text-coral"}`}>
-            {money(a.utilidadNeta)}
-          </p>
-        </div>
-        <div className="rounded-3xl bg-lav p-4">
-          <p className="text-xs font-medium opacity-60">Margen de operación</p>
-          <p className="text-2xl font-bold">{a.margenPct.toFixed(0)}%</p>
-        </div>
-        <div className="rounded-3xl bg-peach p-4">
-          <p className="text-xs font-medium opacity-60">Perdido (merma + desfase)</p>
-          <p className="text-2xl font-bold text-coral">{money(a.perdidaTotal)}</p>
-        </div>
-      </div>
+      <p className="rounded-2xl bg-ink/[0.03] px-3 py-2 text-xs opacity-60">
+        Aquí están los KPIs de operación. La utilidad, el margen y el punto de equilibrio del mes
+        viven en <b>Estado de resultados</b>.
+      </p>
 
       {/* TENDENCIA: VENTAS VS COSTOS POR DÍA */}
       <section className="flex flex-col gap-2">

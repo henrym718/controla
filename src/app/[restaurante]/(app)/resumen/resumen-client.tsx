@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { DayNav } from "@/components/day-nav";
-import { Card, LinkButton } from "@/components/ui";
+import { Card } from "@/components/ui";
 import type { DaySummary } from "@/lib/reports";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -39,6 +39,16 @@ export default function ResumenClient({
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-bold tracking-tight">Resumen diario</h1>
       <DayNav value={date} today={today} onChange={change} />
+
+      {s.closed ? (
+        <div className="rounded-2xl bg-mint px-4 py-2 text-center text-sm font-semibold">
+          ✓ Día cerrado · costos ya calculados
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-ink/5 px-4 py-2 text-center text-xs opacity-60">
+          Día en curso · la merma y el costo por plato se calculan al cerrar el día
+        </div>
+      )}
 
       <div className={loading ? "pointer-events-none opacity-50 transition" : "transition"}>
         <div className="flex flex-col gap-4">
@@ -124,6 +134,29 @@ export default function ResumenClient({
             </div>
           </Card>
 
+          {/* Consumo de empleadas (informativo; ya dentro de los costos) */}
+          {s.empleadas.n > 0 && (
+            <Card className="bg-sand/40">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold">Consumo de empleadas</p>
+                <span className="font-bold">{money(s.empleadas.total)}</span>
+              </div>
+              <div className="mt-1">
+                {s.empleadas.items.map((i, idx) => (
+                  <div key={idx} className={sub}>
+                    <span>
+                      {i.name} · {i.persona}
+                    </span>
+                    <span>{money(i.cost)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] opacity-50">
+                Comida del personal (gratis). Ya está dentro de los costos de arriba; se muestra para control.
+              </p>
+            </Card>
+          )}
+
           {/* Análisis financiero */}
           <Card>
             <p className="mb-1 text-sm font-semibold">Análisis del día</p>
@@ -186,12 +219,6 @@ export default function ResumenClient({
               </div>
             )}
           </Card>
-
-          {!s.closed && (
-            <LinkButton href={`/${slug}/cierre-dia`} variant="soft">
-              Cerrar el día para calcular la merma
-            </LinkButton>
-          )}
         </div>
       </div>
     </div>

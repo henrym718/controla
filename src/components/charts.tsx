@@ -8,6 +8,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -18,6 +19,25 @@ const INK = "#0a0a0a";
 const TEAL = "#00a887";
 const CORAL = "#ff4d3d";
 const YELLOW = "#ffb81f";
+
+export function BreakEvenChart({ data }: { data: { dia: number; acumulado: number }[] }) {
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 8, right: 12, left: -6, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="#00000010" />
+        <XAxis dataKey="dia" tickLine={false} axisLine={false} fontSize={10} />
+        <YAxis tickLine={false} axisLine={false} fontSize={10} width={46} tickFormatter={(v) => `$${v}`} />
+        <Tooltip
+          formatter={(value) => [`$${Number(value).toFixed(2)}`, "Acumulado"]}
+          labelFormatter={(l) => `Día ${l}`}
+          contentStyle={{ borderRadius: 12, border: "1px solid #00000015", fontSize: 12 }}
+        />
+        <ReferenceLine y={0} stroke={INK} strokeDasharray="4 4" />
+        <Line type="monotone" dataKey="acumulado" stroke={TEAL} strokeWidth={2.5} dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
 
 export function MermaLineChart({ data }: { data: { date: string; merma: number }[] }) {
   return (
