@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDate } from "@/lib/shifts";
+import { menuShiftIds, dedupeMenu } from "@/lib/menu";
 import { Stat, LinkButton } from "@/components/ui";
 
 export default async function HoyPage({
@@ -15,6 +16,8 @@ export default async function HoyPage({
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
+  // El menú de hoy = lo de ESTE turno + lo de "Todo el día".
+  const shiftIds = await menuShiftIds(db, session.restaurant_id, session.shift_id);
   const [{ data: caja }, { data: ventas }, { data: menu }, { data: saldos }] =
     await Promise.all([
       db
@@ -30,10 +33,10 @@ export default async function HoyPage({
         .eq("consumo_interno", false),
       db
         .from("daily_menu")
-        .select("price,available,dishes(name)")
+        .select("dish_id,shift_id,price,available,dishes(name)")
         .eq("restaurant_id", session.restaurant_id)
         .eq("business_date", businessDate())
-        .eq("shift_id", session.shift_id)
+        .in("shift_id", shiftIds)
         .order("sort_order"),
       db
         .from("v_saldos_credito")
@@ -43,7 +46,7 @@ export default async function HoyPage({
     ]);
 
   const totalVentas = (ventas ?? []).reduce((s, v) => s + Number(v.total), 0);
-  const menuItems = (menu ?? []).filter((m) => m.available);
+  const menuItems = dedupeMenu(menu ?? [], session.shift_id).filter((m) => m.available);
   const deudores = saldos ?? [];
   const totalPorCobrar = deudores.reduce((s, d) => s + Number(d.saldo), 0);
 
@@ -124,7 +127,7 @@ export default async function HoyPage({
       </Link>
 
       <Link href={`/${restaurante}/consumo`} className="rounded-3xl bg-lav p-5">
-        <span className="block text-lg font-bold leading-tight">Registrar consumo</span>
+        <span className="block text-lg font-bold leading-tight">Registrar consumo de cocina</span>
         <span className="mt-0.5 block text-sm opacity-60">
           Lo que usaste para cocinar
         </span>

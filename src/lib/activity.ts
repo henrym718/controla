@@ -22,6 +22,8 @@ export type EventCode =
   | "caja_inicial"
   | "ingreso_caja"
   | "egreso_caja"
+  | "conteo_caja"
+  | "reabrir_conteo"
   | "gasto"
   | "compra"
   | "produccion"

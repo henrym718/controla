@@ -14,50 +14,39 @@ export default async function TurnoCerradoPage({
   }>;
 }) {
   const { restaurante } = await params;
-  const { exp, cnt, dif, fl, dep } = await searchParams;
+  const { dif, dep } = await searchParams;
   const diff = Number(dif ?? 0);
   const cuadra = Math.abs(diff) < 0.005;
+  const difClass = cuadra ? "text-blue" : diff > 0 ? "text-teal" : "text-coral";
+  const difLabel = cuadra ? "Caja exacta" : diff > 0 ? "Sobró" : "Faltó";
+  const entrega = Number(dep ?? 0);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 p-6 text-center">
-      <h1 className="text-3xl font-bold tracking-tight">Turno cerrado</h1>
+      <div>
+        <p className="text-5xl">✅</p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight">Caja cerrada</h1>
+        <p className="mt-1 text-sm opacity-60">
+          El turno quedó cerrado. Todas salieron de la sesión.
+        </p>
+      </div>
 
-      {exp != null && (
-        <div className="rounded-3xl border border-ink/10 p-5 text-left">
-          <Row label="Caja esperada" value={Number(exp)} />
-          <Row label="Caja contada" value={Number(cnt ?? 0)} />
-          <div className="my-2 border-t border-ink/10" />
-          <div className="flex justify-between font-bold">
-            <span>Descuadre</span>
-            <span className={cuadra ? "text-teal" : "text-coral"}>
-              ${diff.toFixed(2)}
-            </span>
-          </div>
-          {(fl != null || dep != null) && (
-            <>
-              <div className="my-2 border-t border-ink/10" />
-              <Row label="Caja que dejaste" value={Number(fl ?? 0)} />
-              <Row label="Efectivo entregado a la jefa" value={Number(dep ?? 0)} />
-            </>
-          )}
-        </div>
-      )}
+      <div className="rounded-3xl border border-ink/10 p-5">
+        <p className="text-xs opacity-60">Efectivo para entregar a la jefa</p>
+        <p className="text-3xl font-bold">${entrega.toFixed(2)}</p>
+        {dif != null && (
+          <p className={`mt-2 text-sm font-semibold ${difClass}`}>
+            {difLabel}: ${diff.toFixed(2)}
+          </p>
+        )}
+      </div>
 
       <Link
         href={`/${restaurante}`}
         className="rounded-full bg-ink py-4 font-semibold text-white"
       >
-        Ingresar de nuevo
+        Volver al inicio
       </Link>
     </main>
-  );
-}
-
-function Row({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex justify-between py-1 text-sm">
-      <span className="opacity-60">{label}</span>
-      <span>${value.toFixed(2)}</span>
-    </div>
   );
 }

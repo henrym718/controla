@@ -16,7 +16,7 @@ export default async function TurnosPage({
   const db = createAdminClient();
   const { data: shifts } = await db
     .from("shifts")
-    .select("id,name,start_time,end_time,active")
+    .select("id,name,start_time,end_time,active,is_all_day")
     .eq("restaurant_id", session.restaurant_id)
     .order("sort_order");
 
@@ -28,6 +28,7 @@ export default async function TurnosPage({
         start: s.start_time,
         end: s.end_time,
         active: s.active,
+        isAllDay: s.is_all_day,
       }))}
     />
   );

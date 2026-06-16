@@ -17,6 +17,8 @@ interface DishRow {
   name: string;
   catalogPrice: number;
   inMenu: boolean;
+  /** Viene del turno "Todo el día": se vende en todos los turnos (solo lectura aquí). */
+  inheritedFromAllDay: boolean;
   price: number;
   available: boolean;
   kind: "plato" | "combo" | "extra";
@@ -57,6 +59,7 @@ export default function MenuClient({
   date,
   shiftId,
   shiftName,
+  isAllDayShift,
   shifts,
   dishes,
 }: {
@@ -65,6 +68,7 @@ export default function MenuClient({
   date: string;
   shiftId: string;
   shiftName: string;
+  isAllDayShift: boolean;
   shifts: ShiftOpt[];
   dishes: DishRow[];
 }) {
@@ -90,8 +94,11 @@ export default function MenuClient({
     go(ymd(d), shiftId);
   };
 
-  const enMenu = dishes.filter((d) => d.inMenu);
-  const fuera = dishes.filter((d) => !d.inMenu);
+  const propios = dishes.filter((d) => d.inMenu);
+  const heredados = dishes.filter((d) => d.inheritedFromAllDay);
+  // Lo de este turno primero; lo heredado de "Todo el día" abajo (solo lectura).
+  const enMenu = [...propios, ...heredados];
+  const fuera = dishes.filter((d) => !d.inMenu && !d.inheritedFromAllDay);
 
   return (
     <div className="flex flex-col gap-4">
@@ -128,7 +135,24 @@ export default function MenuClient({
         El precio sale del catálogo. Los adicionales y bebidas aparecen siempre en la venta.
       </p>
 
-      {isAdmin && enMenu.length > 0 && (
+      {isAllDayShift ? (
+        <p className="rounded-2xl bg-mint px-4 py-3 text-sm">
+          <span className="font-semibold">Todo el día.</span> Lo que pongas aquí se
+          vende en <span className="font-semibold">todos los turnos</span> del día.
+        </p>
+      ) : (
+        heredados.length > 0 && (
+          <p className="rounded-2xl bg-lav px-4 py-3 text-sm">
+            Los platos marcados{" "}
+            <span className="rounded-full bg-ink/10 px-2 py-0.5 text-[10px] font-semibold">
+              Todo el día
+            </span>{" "}
+            se venden en todos los turnos. Para cambiarlos, ve al turno “Todo el día”.
+          </p>
+        )
+      )}
+
+      {isAdmin && propios.length > 0 && (
         <button
           onClick={() => setShowCopy((v) => !v)}
           className="self-start rounded-full border border-ink/15 px-4 py-1.5 text-sm font-semibold"
@@ -255,7 +279,9 @@ function Row({
   return (
     <div
       className={`flex items-center gap-2 rounded-2xl border px-3 py-2.5 ${
-        dish.inMenu && !dish.available ? "border-ink/10 bg-ink/[0.03] opacity-60" : "border-ink/10"
+        (dish.inMenu || dish.inheritedFromAllDay) && !dish.available
+          ? "border-ink/10 bg-ink/[0.03] opacity-60"
+          : "border-ink/10"
       }`}
     >
       <span className="flex flex-1 items-center gap-1.5 text-sm font-medium">
@@ -267,9 +293,16 @@ function Row({
             {KIND_TAG[dish.kind]!.label}
           </span>
         )}
+        {dish.inheritedFromAllDay && (
+          <span className="rounded-full bg-ink/10 px-2 py-0.5 text-[10px] font-semibold">
+            Todo el día
+          </span>
+        )}
       </span>
       <span className="text-sm font-semibold opacity-50">{money(dish.catalogPrice)}</span>
-      {dish.inMenu ? (
+      {dish.inheritedFromAllDay ? (
+        <span className="text-xs opacity-50">se vende todo el día</span>
+      ) : dish.inMenu ? (
         <>
           <button
             onClick={() =>
