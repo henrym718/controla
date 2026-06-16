@@ -10,6 +10,7 @@ interface Shift {
   start: string;
   end: string;
   active: boolean;
+  isAllDay: boolean;
 }
 
 export default function TurnosClient({ shifts }: { shifts: Shift[] }) {
@@ -124,28 +125,41 @@ function TurnoCard({ shift }: { shift: Shift }) {
     <Card className={shift.active ? "" : "opacity-50"}>
       <div className="flex items-center justify-between">
         <div>
-          <p className="font-semibold">{shift.name}</p>
+          <p className="flex items-center gap-1.5 font-semibold">
+            {shift.name}
+            {shift.isAllDay && (
+              <span className="rounded-full bg-mint px-2 py-0.5 text-[10px] font-semibold">
+                fijo
+              </span>
+            )}
+          </p>
           <p className="text-xs opacity-60">
-            {shift.start.slice(0, 5)}–{shift.end.slice(0, 5)}
+            {shift.isAllDay
+              ? "Siempre disponible · su menú se vende en todos los turnos"
+              : `${shift.start.slice(0, 5)}–${shift.end.slice(0, 5)}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setEditing(true)}
-            className="rounded-full bg-ink/10 px-4 py-2 text-sm font-semibold"
-          >
-            Editar
-          </button>
-          <button
-            onClick={() => {
-              if (window.confirm(`¿Eliminar turno ${shift.name}?`))
-                startTr(() => void eliminarTurno(shift.id));
-            }}
-            className="rounded-full bg-coral/10 px-4 py-2 text-sm font-semibold text-coral"
-          >
-            Eliminar
-          </button>
-        </div>
+        {shift.isAllDay ? (
+          <span className="text-xs opacity-50">No se elimina</span>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-full bg-ink/10 px-4 py-2 text-sm font-semibold"
+            >
+              Editar
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`¿Eliminar turno ${shift.name}?`))
+                  startTr(() => void eliminarTurno(shift.id));
+              }}
+              className="rounded-full bg-coral/10 px-4 py-2 text-sm font-semibold text-coral"
+            >
+              Eliminar
+            </button>
+          </div>
+        )}
       </div>
     </Card>
   );

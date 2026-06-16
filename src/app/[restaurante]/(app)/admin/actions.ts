@@ -213,6 +213,16 @@ export async function actualizarTurno(
 export async function eliminarTurno(id: string): Promise<ActionResult> {
   const { session, db } = await admin();
   const nombre = await nombreDe(db, "shifts", id);
+  // El turno "Todo el día" siempre debe existir: no se puede eliminar.
+  const { data: shift } = await db
+    .from("shifts")
+    .select("is_all_day")
+    .eq("id", id)
+    .eq("restaurant_id", session.restaurant_id)
+    .maybeSingle();
+  if (shift?.is_all_day) {
+    return { error: 'El turno "Todo el día" no se puede eliminar.' };
+  }
   const { error } = await db
     .from("shifts")
     .delete()

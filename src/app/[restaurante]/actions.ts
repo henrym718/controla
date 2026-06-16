@@ -330,6 +330,90 @@ export async function cerrarTurnoAction(
   );
 }
 
+/**
+ * Registra y BLOQUEA el efectivo contado ANTES de revelar lo esperado (anti-robo).
+ * Idempotente: si ya estaba bloqueado, no vuelve a tocar nada ni re-registra en
+ * bitácora; solo lleva a la pantalla de cuadre. Una vez fijado, la encargada no
+ * puede cambiarlo (solo la jefa lo reabre con reabrirConteoAction).
+ */
+export async function registrarConteoAction(countedCash: number): Promise<void> {
+  const session = await getSession();
+  if (!session) redirect("/");
+
+  const db = createAdminClient();
+
+  // ¿Ya estaba bloqueado? (volver atrás / reenvío) → no re-registrar, solo seguir.
+  const { data: ss } = await db
+    .from("shift_sessions")
+    .select("counted_at")
+    .eq("id", session.shift_session_id)
+    .maybeSingle();
+  if (ss?.counted_at) redirect(`/${session.slug}/cierre-turno`);
+
+  const { error } = await db.rpc("registrar_conteo_caja", {
+    p_session_id: session.shift_session_id,
+    p_counted_cash: countedCash,
+    p_user: session.user_id,
+  });
+  if (error) redirect(`/${session.slug}/cierre-turno?e=1`);
+
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: session.shift_session_id,
+    source: "manual",
+    event: "conteo_caja",
+    description: `${session.user_name} registró y bloqueó el conteo de caja: ${money(countedCash)}`,
+    metadata: { counted: countedCash },
+  });
+
+  redirect(`/${session.slug}/cierre-turno`);
+}
+
+/** SOLO la jefa: reabre (borra) el conteo bloqueado de un turno abierto para
+ *  corregir un error de digitación. Devuelve {error} si no se pudo. */
+export async function reabrirConteoAction(
+  sessionId: string,
+): Promise<{ error?: string }> {
+  const session = await getSession();
+  if (!session) return { error: "Sesión no encontrada." };
+  if (session.user_role !== "admin")
+    return { error: "Solo la jefa puede reabrir el conteo." };
+
+  const db = createAdminClient();
+
+  // El turno debe ser de este restaurante (defensa) y seguir abierto.
+  const { data: ss } = await db
+    .from("shift_sessions")
+    .select("restaurant_id,status")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!ss || ss.restaurant_id !== session.restaurant_id)
+    return { error: "Turno no encontrado." };
+  if (ss.status !== "open")
+    return { error: "El turno ya se cerró; no se puede reabrir el conteo." };
+
+  const { error } = await db.rpc("reabrir_conteo_caja", {
+    p_session_id: sessionId,
+    p_admin: session.user_id,
+  });
+  if (error) return { error: "No se pudo reabrir el conteo." };
+
+  await logActivity(db, {
+    restaurantId: session.restaurant_id,
+    userId: session.user_id,
+    actorName: session.user_name,
+    shiftSessionId: sessionId,
+    source: "manual",
+    event: "reabrir_conteo",
+    description: `${session.user_name} reabrió el conteo de caja del turno (corrección)`,
+    metadata: { session_id: sessionId },
+  });
+
+  return {};
+}
+
 /** Cierre diario: aplica la merma % del granel y prorratea (RPC cerrar_dia). */
 export async function cerrarDiaAction(
   merma: Record<string, number>,

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { DayNav } from "@/components/day-nav";
-import { Card } from "@/components/ui";
+import { Button, Card, Modal } from "@/components/ui";
+import { reabrirConteoAction } from "../../actions";
 
 export interface CuadreTurno {
   id: string;
@@ -115,7 +116,7 @@ export default function CuadresClient({
           )}
 
           {turnos.map((t) => (
-            <TurnoCard key={t.id} t={t} />
+            <TurnoCard key={t.id} t={t} onChanged={() => change(date)} />
           ))}
         </div>
       </div>
@@ -123,12 +124,29 @@ export default function CuadresClient({
   );
 }
 
-function TurnoCard({ t }: { t: CuadreTurno }) {
+function TurnoCard({ t, onChanged }: { t: CuadreTurno; onChanged: () => void }) {
   const cerrado = t.status === "closed";
+  const bloqueado = !cerrado && t.counted_cash != null; // contó pero aún no cierra
   const dif = Number(t.cash_discrepancy ?? 0);
   const cuadra = Math.abs(dif) < 0.005;
   const costos = Number(t.gastos) + Number(t.egresos);
   const sub = "flex items-center justify-between py-1 text-xs opacity-70";
+  const [confirm, setConfirm] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function reabrir() {
+    setErr(null);
+    startTransition(async () => {
+      const r = await reabrirConteoAction(t.id);
+      if (r.error) {
+        setErr(r.error);
+      } else {
+        setConfirm(false);
+        onChanged();
+      }
+    });
+  }
 
   return (
     <Card>
@@ -203,6 +221,20 @@ function TurnoCard({ t }: { t: CuadreTurno }) {
               </span>
             </div>
           </>
+        ) : bloqueado ? (
+          <div className="py-1">
+            <div className="flex items-center justify-between text-sm">
+              <span className="opacity-60">🔒 Conteo registrado (sin cerrar)</span>
+              <span className="font-semibold">{money(t.counted_cash)}</span>
+            </div>
+            <button
+              onClick={() => setConfirm(true)}
+              className="mt-1 text-xs font-semibold text-coral underline"
+            >
+              Reiniciar conteo
+            </button>
+            {err && <p className="mt-1 text-xs text-coral">{err}</p>}
+          </div>
         ) : (
           <p className="py-1 text-xs italic opacity-50">Turno en curso · aún sin cuadrar.</p>
         )}
@@ -221,6 +253,25 @@ function TurnoCard({ t }: { t: CuadreTurno }) {
           </div>
         </div>
       )}
+
+      <Modal open={confirm} onClose={() => !pending && setConfirm(false)}>
+        <div className="flex flex-col gap-3">
+          <h2 className="text-xl font-bold tracking-tight">¿Reiniciar el conteo?</h2>
+          <p className="text-sm opacity-70">
+            La encargada del turno <span className="font-semibold">{t.shift}</span> registró{" "}
+            <span className="font-semibold">{money(t.counted_cash)}</span>. Reiniciarlo le
+            permitirá volver a contar la caja desde cero. Úsalo solo si hubo un error de
+            digitación.
+          </p>
+          {err && <p className="text-sm font-semibold text-coral">{err}</p>}
+          <Button variant="accent" onClick={reabrir} disabled={pending}>
+            {pending ? "Reiniciando…" : "Sí, reiniciar"}
+          </Button>
+          <Button variant="outline" onClick={() => setConfirm(false)} disabled={pending}>
+            Cancelar
+          </Button>
+        </div>
+      </Modal>
     </Card>
   );
 }

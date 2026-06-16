@@ -9,6 +9,7 @@ import {
   type ToolCtx,
 } from "@/lib/agent/tools";
 import { businessDate } from "@/lib/shifts";
+import { menuShiftIds, dedupeMenu } from "@/lib/menu";
 import type { SessionClaims } from "@/lib/auth/jwt";
 
 export const runtime = "nodejs";
@@ -92,13 +93,15 @@ export async function POST(req: Request) {
   }
 
   const today = businessDate();
+  // Menú efectivo del turno = lo de ESTE turno + lo de "Todo el día".
+  const shiftIds = await menuShiftIds(db, session.restaurant_id, session.shift_id);
   const [{ data: menuRows }, { data: dishes }, { data: ings }] = await Promise.all([
     db
       .from("daily_menu")
-      .select("price,available,dishes(name,is_combo,is_extra)")
+      .select("dish_id,shift_id,price,available,dishes(name,is_combo,is_extra)")
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", today)
-      .eq("shift_id", session.shift_id)
+      .in("shift_id", shiftIds)
       .order("sort_order"),
     db
       .from("dishes")
@@ -113,7 +116,7 @@ export async function POST(req: Request) {
   ]);
 
   const menu =
-    (menuRows ?? [])
+    dedupeMenu(menuRows ?? [], session.shift_id)
       .filter((m) => m.available)
       .map((m) => {
         const d = m.dishes as unknown as { name: string; is_combo: boolean; is_extra: boolean } | null;

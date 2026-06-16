@@ -7,14 +7,28 @@ const EMPTY = { total: 0, items: [] as never[] };
 
 export default async function CierrePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ restaurante: string }>;
+  searchParams: Promise<{ e?: string }>;
 }) {
   const { restaurante } = await params;
+  const { e } = await searchParams;
   const session = await getSession();
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
+
+  // Conteo bloqueado (anti-robo): si la encargada ya registró el efectivo, la
+  // pantalla salta directo al cuadre y NO vuelve a pedirlo (ni la deja cambiarlo).
+  const { data: ssRow } = await db
+    .from("shift_sessions")
+    .select("counted_cash,counted_at")
+    .eq("id", session.shift_session_id)
+    .maybeSingle();
+  const contada = ssRow?.counted_cash == null ? null : Number(ssRow.counted_cash);
+  const conteoBloqueado = ssRow?.counted_at != null;
+
   const { data } = await db.rpc("resumen_turno", {
     p_session_id: session.shift_session_id,
   });
@@ -102,6 +116,9 @@ export default async function CierrePage({
       credito={credito}
       cobrosCredito={cobrosCredito}
       cuentasMesa={cuentasMesa}
+      contada={contada}
+      conteoBloqueado={conteoBloqueado}
+      errorConteo={e === "1"}
     />
   );
 }

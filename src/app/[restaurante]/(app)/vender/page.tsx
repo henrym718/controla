@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDate } from "@/lib/shifts";
+import { menuShiftIds, dedupeMenu } from "@/lib/menu";
 import VenderClient, { type SellItem, type CuentaLine } from "./vender-client";
 
 interface CuentaItemRow {
@@ -28,6 +29,8 @@ export default async function VenderPage({
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
+  // El menú efectivo del turno = lo de ESTE turno + lo de "Todo el día".
+  const shiftIds = await menuShiftIds(db, session.restaurant_id, session.shift_id);
   const [
     { data: menu },
     { data: adicionales },
@@ -37,11 +40,10 @@ export default async function VenderPage({
   ] = await Promise.all([
     db
       .from("daily_menu")
-      .select("dish_id,sort_order,dishes(id,name,price,is_combo,is_extra,active)")
+      .select("dish_id,shift_id,available,sort_order,dishes(id,name,price,is_combo,is_extra,active)")
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", businessDate())
-      .eq("shift_id", session.shift_id)
-      .eq("available", true)
+      .in("shift_id", shiftIds)
       .order("sort_order"),
     db
       .from("dishes")
@@ -79,10 +81,18 @@ export default async function VenderPage({
     is_extra: boolean;
     active: boolean;
   };
-  type MenuRow = { dish_id: string; dishes: Dish | null };
+  type MenuRow = {
+    dish_id: string;
+    shift_id: string;
+    available: boolean;
+    dishes: Dish | null;
+  };
 
-  const principales: SellItem[] = ((menu ?? []) as unknown as MenuRow[])
-    .filter((m) => m.dishes && m.dishes.active && !m.dishes.is_extra)
+  const principales: SellItem[] = dedupeMenu(
+    (menu ?? []) as unknown as MenuRow[],
+    session.shift_id,
+  )
+    .filter((m) => m.available && m.dishes && m.dishes.active && !m.dishes.is_extra)
     .map((m) => ({
       key: `plato:${m.dishes!.id}`,
       kind: "plato",

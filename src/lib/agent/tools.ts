@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { SessionClaims } from "@/lib/auth/jwt";
 import { businessDate } from "@/lib/shifts";
+import { menuShiftIds, dedupeMenu } from "@/lib/menu";
 import { computeDaySummary } from "@/lib/reports";
 import { logActivity, type EventCode } from "@/lib/activity";
 
@@ -98,16 +99,21 @@ async function resolvePackaging(ctx: ToolCtx, name: string) {
   return data?.[0] ?? null;
 }
 
-/** Platos del menú de HOY en el turno actual. */
+/** Platos del menú de HOY del turno actual (incluye los de "Todo el día"). */
 async function todayMenu(ctx: ToolCtx) {
+  const shiftIds = await menuShiftIds(
+    ctx.db,
+    ctx.session.restaurant_id,
+    ctx.session.shift_id,
+  );
   const { data } = await ctx.db
     .from("daily_menu")
-    .select("id,price,available,dishes(id,name)")
+    .select("id,dish_id,shift_id,price,available,dishes(id,name)")
     .eq("restaurant_id", ctx.session.restaurant_id)
     .eq("business_date", businessDate())
-    .eq("shift_id", ctx.session.shift_id)
+    .in("shift_id", shiftIds)
     .order("sort_order");
-  return (data ?? []).map((m) => {
+  return dedupeMenu(data ?? [], ctx.session.shift_id).map((m) => {
     const d = m.dishes as unknown as { id: string; name: string } | null;
     return { menuId: m.id, price: Number(m.price), available: m.available, dishId: d?.id ?? null, name: d?.name ?? "" };
   });

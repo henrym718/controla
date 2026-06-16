@@ -1581,6 +1581,7 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           closing_float: number | null
+          counted_at: string | null
           counted_cash: number | null
           deposit_amount: number | null
           expected_cash: number | null
@@ -1600,6 +1601,7 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           closing_float?: number | null
+          counted_at?: string | null
           counted_cash?: number | null
           deposit_amount?: number | null
           expected_cash?: number | null
@@ -1619,6 +1621,7 @@ export type Database = {
           closed_at?: string | null
           closed_by?: string | null
           closing_float?: number | null
+          counted_at?: string | null
           counted_cash?: number | null
           deposit_amount?: number | null
           expected_cash?: number | null
@@ -1676,6 +1679,7 @@ export type Database = {
           created_at: string
           end_time: string
           id: string
+          is_all_day: boolean
           name: string
           restaurant_id: string
           sort_order: number
@@ -1687,6 +1691,7 @@ export type Database = {
           created_at?: string
           end_time: string
           id?: string
+          is_all_day?: boolean
           name: string
           restaurant_id: string
           sort_order?: number
@@ -1698,6 +1703,7 @@ export type Database = {
           created_at?: string
           end_time?: string
           id?: string
+          is_all_day?: boolean
           name?: string
           restaurant_id?: string
           sort_order?: number
@@ -2035,6 +2041,7 @@ export type Database = {
           closed_at: string | null
           closed_by: string | null
           closing_float: number | null
+          counted_at: string | null
           counted_cash: number | null
           deposit_amount: number | null
           expected_cash: number | null
@@ -2161,6 +2168,35 @@ export type Database = {
         Returns: Json
       }
       purgar_bitacora: { Args: { p_days?: number }; Returns: number }
+      reabrir_conteo_caja: {
+        Args: { p_admin: string; p_session_id: string }
+        Returns: {
+          business_date: string
+          cash_discrepancy: number | null
+          closed_at: string | null
+          closed_by: string | null
+          closing_float: number | null
+          counted_at: string | null
+          counted_cash: number | null
+          deposit_amount: number | null
+          expected_cash: number | null
+          id: string
+          notes: string | null
+          opened_at: string
+          opened_by: string | null
+          opening_cash: number
+          responsible_user_id: string | null
+          restaurant_id: string
+          shift_id: string
+          status: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shift_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       registrar_cobro_credito: {
         Args: {
           p_amount: number
@@ -2217,6 +2253,35 @@ export type Database = {
           p_user: string
         }
         Returns: Json
+      }
+      registrar_conteo_caja: {
+        Args: { p_counted_cash: number; p_session_id: string; p_user: string }
+        Returns: {
+          business_date: string
+          cash_discrepancy: number | null
+          closed_at: string | null
+          closed_by: string | null
+          closing_float: number | null
+          counted_at: string | null
+          counted_cash: number | null
+          deposit_amount: number | null
+          expected_cash: number | null
+          id: string
+          notes: string | null
+          opened_at: string
+          opened_by: string | null
+          opening_cash: number
+          responsible_user_id: string | null
+          restaurant_id: string
+          shift_id: string
+          status: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "shift_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       registrar_gasto: {
         Args: {
