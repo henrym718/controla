@@ -87,6 +87,40 @@ export async function agregarAlMenu(input: {
   return { ok: true };
 }
 
+// Agrega varios platos al menú de una sola vez (ej. "todos los adicionales").
+export async function agregarVariosAlMenu(input: {
+  items: { dishId: string; price: number }[];
+  date?: string;
+  shiftId?: string;
+}): Promise<ActionResult> {
+  const { session, db } = await ctx();
+  const t = target(session, input.date, input.shiftId);
+  const rows = (input.items ?? [])
+    .filter((i) => i.dishId && i.price > 0)
+    .map((i) => ({
+      restaurant_id: session.restaurant_id,
+      business_date: t.date,
+      shift_id: t.shiftId,
+      dish_id: i.dishId,
+      price: i.price,
+      available: true,
+    }));
+  if (rows.length === 0) return { error: "No hay nada para agregar (revisa los precios)." };
+  const { error } = await db
+    .from("daily_menu")
+    .upsert(rows, { onConflict: "restaurant_id,business_date,shift_id,dish_id" });
+  if (error) return { error: error.message };
+  await logMenu(
+    session,
+    db,
+    "menu",
+    `Agregó ${rows.length} ítem(s) al menú del ${t.date}`,
+    { date: t.date, count: rows.length },
+  );
+  revalidatePath(`/${session.slug}/menu`);
+  return { ok: true, count: rows.length };
+}
+
 export async function quitarDelMenu(input: {
   dishId: string;
   date?: string;

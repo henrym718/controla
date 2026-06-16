@@ -4,7 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { PageTitle } from "@/components/ui";
 import { parseLocal, eachDate } from "@/lib/range";
-import { agregarAlMenu, quitarDelMenu, toggleAgotado, copiarMenu } from "./actions";
+import {
+  agregarAlMenu,
+  agregarVariosAlMenu,
+  quitarDelMenu,
+  toggleAgotado,
+  copiarMenu,
+} from "./actions";
 
 interface DishRow {
   id: string;
@@ -64,6 +70,16 @@ export default function MenuClient({
   const router = useRouter();
   const pathname = usePathname();
   const [showCopy, setShowCopy] = useState(false);
+  const [bulkPending, startBulk] = useTransition();
+
+  const addAll = (items: DishRow[]) => {
+    const payload = items.map((d) => ({ dishId: d.id, price: d.price || d.catalogPrice }));
+    if (payload.length === 0) return;
+    startBulk(async () => {
+      await agregarVariosAlMenu({ items: payload, date, shiftId });
+      router.refresh();
+    });
+  };
 
   const go = (d: string, s: string) =>
     router.push(`${pathname}?date=${d}&shift=${s}`);
@@ -151,9 +167,20 @@ export default function MenuClient({
         ).map((g) =>
           g.items.length === 0 ? null : (
             <div key={g.label} className="flex flex-col gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
-                Agregar — {g.label}
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+                  Agregar — {g.label}
+                </p>
+                {g.items.length > 1 && (
+                  <button
+                    onClick={() => addAll(g.items)}
+                    disabled={bulkPending}
+                    className="rounded-full bg-ink px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    {bulkPending ? "Agregando…" : "Agregar todos"}
+                  </button>
+                )}
+              </div>
               {g.items.map((d) => (
                 <Row key={d.id} dish={d} date={date} shiftId={shiftId} />
               ))}
