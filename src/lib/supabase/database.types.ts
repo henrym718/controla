@@ -505,6 +505,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "dish_components_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "dish_components_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -757,6 +764,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "granel_close_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "granel_close_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -880,6 +894,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "inventory_counts_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "inventory_counts_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -962,6 +983,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "inventory_movements_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1072,6 +1100,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "production_batches_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1284,6 +1319,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "sales_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1535,6 +1577,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "takeout_packaging_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "takeout_packaging_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -1652,6 +1701,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "production_batches_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
