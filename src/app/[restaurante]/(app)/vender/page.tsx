@@ -2,20 +2,39 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDate } from "@/lib/shifts";
-import VenderClient, { type SellItem } from "./vender-client";
+import VenderClient, { type SellItem, type CuentaLine } from "./vender-client";
+
+interface CuentaItemRow {
+  kind: "plato" | "producto";
+  ref_id: string;
+  name: string;
+  unit_price: number;
+  qty: number;
+}
+
+const cuentaLineKey = (kind: string, refId: string) =>
+  `${kind === "plato" ? "plato" : "prod"}:${refId}`;
 
 export default async function VenderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ restaurante: string }>;
+  searchParams: Promise<{ cuenta?: string }>;
 }) {
   const { restaurante } = await params;
+  const { cuenta: cuentaId } = await searchParams;
   const session = await getSession();
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
-  const [{ data: menu }, { data: adicionales }, { data: productos }] = await Promise.all([
-    // Platos y combos del MENÚ del día (qué se vende hoy en este turno).
+  const [
+    { data: menu },
+    { data: adicionales },
+    { data: productos },
+    { data: clientes },
+    { data: cuentas },
+  ] = await Promise.all([
     db
       .from("daily_menu")
       .select("dish_id,sort_order,dishes(id,name,price,is_combo,is_extra,active)")
@@ -24,7 +43,6 @@ export default async function VenderPage({
       .eq("shift_id", session.shift_id)
       .eq("available", true)
       .order("sort_order"),
-    // TODOS los adicionales activos del catálogo (siempre disponibles en la venta).
     db
       .from("dishes")
       .select("id,name,price")
@@ -32,7 +50,6 @@ export default async function VenderPage({
       .eq("is_extra", true)
       .eq("active", true)
       .order("name"),
-    // TODOS los productos vendibles del inventario (colas, aguas) activos.
     db
       .from("ingredients")
       .select("id,name,sale_price")
@@ -40,6 +57,18 @@ export default async function VenderPage({
       .eq("is_sellable", true)
       .eq("active", true)
       .order("name"),
+    db
+      .from("clientes")
+      .select("id,name,kind")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("active", true)
+      .order("name"),
+    db
+      .from("cuentas_mesa")
+      .select("id,label,total,items")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("status", "abierta")
+      .order("created_at"),
   ]);
 
   type Dish = {
@@ -52,7 +81,6 @@ export default async function VenderPage({
   };
   type MenuRow = { dish_id: string; dishes: Dish | null };
 
-  // Platos y combos = tarjetas grandes (lo principal). Precio del catálogo (lo fija la admin).
   const principales: SellItem[] = ((menu ?? []) as unknown as MenuRow[])
     .filter((m) => m.dishes && m.dishes.active && !m.dishes.is_extra)
     .map((m) => ({
@@ -64,7 +92,6 @@ export default async function VenderPage({
       isCombo: m.dishes!.is_combo,
     }));
 
-  // Cajón (siempre presente, colapsado): adicionales del catálogo + productos vendibles.
   const extrasAdicional: SellItem[] = (adicionales ?? []).map((d) => ({
     key: `plato:${d.id}`,
     kind: "plato",
@@ -83,11 +110,50 @@ export default async function VenderPage({
       price: Number(p.sale_price),
     }));
 
+  const clientesList = (clientes ?? []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    kind: c.kind === "empleado" ? ("empleado" as const) : ("cliente" as const),
+  }));
+
+  const cuentasAbiertas = (cuentas ?? []).map((c) => {
+    const items = (c.items as unknown as CuentaItemRow[]) ?? [];
+    return {
+      id: c.id,
+      label: c.label,
+      total: Number(c.total),
+      count: items.reduce((s, i) => s + Number(i.qty), 0),
+    };
+  });
+
+  let cuenta: { id: string; label: string; lines: CuentaLine[] } | null = null;
+  if (cuentaId) {
+    const c = (cuentas ?? []).find((x) => x.id === cuentaId);
+    if (c) {
+      const items = (c.items as unknown as CuentaItemRow[]) ?? [];
+      cuenta = {
+        id: c.id,
+        label: c.label,
+        lines: items.map((i) => ({
+          key: cuentaLineKey(i.kind, i.ref_id),
+          kind: i.kind === "producto" ? "producto" : "plato",
+          id: i.ref_id,
+          name: i.name,
+          price: Number(i.unit_price),
+          qty: Number(i.qty),
+        })),
+      };
+    }
+  }
+
   return (
     <VenderClient
       slug={restaurante}
       principales={principales}
       extras={[...extrasAdicional, ...extrasProducto]}
+      clientes={clientesList}
+      cuentasAbiertas={cuentasAbiertas}
+      cuenta={cuenta}
     />
   );
 }

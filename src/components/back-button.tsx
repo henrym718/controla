@@ -16,7 +16,7 @@ export function BackButton() {
   if (!page || page === "hoy" || page === "capturar") return null;
 
   const target =
-    page === "admin" || page === "cierre-turno"
+    page === "admin" || page === "cierre-turno" || page === "cuentas-por-cobrar"
       ? `/${slug}/hoy`
       : `/${slug}/admin`;
 
