@@ -57,6 +57,20 @@ export default async function HoyPage({
       </div>
 
       <Link
+        href={`/${restaurante}/vender`}
+        className="relative overflow-hidden rounded-[32px] bg-coral p-8 text-white"
+      >
+        <span className="blob absolute -right-6 -top-6 h-28 w-28 bg-white/20" />
+        <span className="blob absolute -bottom-8 left-12 h-20 w-20 bg-white/10" />
+        <span className="relative block text-2xl font-bold leading-tight">
+          Registrar venta
+        </span>
+        <span className="relative mt-1 block text-sm text-white/80">
+          Marca los platos y cobra al toque
+        </span>
+      </Link>
+
+      <Link
         href={`/${restaurante}/menu`}
         className="rounded-3xl border border-ink/10 p-4"
       >
