@@ -220,6 +220,8 @@ export type Database = {
       cash_movements: {
         Row: {
           amount: number
+          categoria: string | null
+          cliente_id: string | null
           created_at: string
           id: string
           op_id: string | null
@@ -234,6 +236,8 @@ export type Database = {
         }
         Insert: {
           amount: number
+          categoria?: string | null
+          cliente_id?: string | null
           created_at?: string
           id?: string
           op_id?: string | null
@@ -248,6 +252,8 @@ export type Database = {
         }
         Update: {
           amount?: number
+          categoria?: string | null
+          cliente_id?: string | null
           created_at?: string
           id?: string
           op_id?: string | null
@@ -261,6 +267,20 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "cash_movements_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_movements_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "v_saldos_credito"
+            referencedColumns: ["cliente_id"]
+          },
           {
             foreignKeyName: "cash_movements_restaurant_id_fkey"
             columns: ["restaurant_id"]
@@ -294,6 +314,51 @@ export type Database = {
             columns: ["voided_by"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clientes: {
+        Row: {
+          active: boolean
+          created_at: string
+          created_by: string | null
+          id: string
+          kind: string
+          name: string
+          restaurant_id: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          kind?: string
+          name: string
+          restaurant_id: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          kind?: string
+          name?: string
+          restaurant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clientes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clientes_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
             referencedColumns: ["id"]
           },
         ]
@@ -1235,6 +1300,7 @@ export type Database = {
       sales: {
         Row: {
           business_date: string
+          cliente_id: string | null
           consumo_interno: boolean
           created_at: string
           dish_id: string | null
@@ -1257,6 +1323,7 @@ export type Database = {
         }
         Insert: {
           business_date?: string
+          cliente_id?: string | null
           consumo_interno?: boolean
           created_at?: string
           dish_id?: string | null
@@ -1279,6 +1346,7 @@ export type Database = {
         }
         Update: {
           business_date?: string
+          cliente_id?: string | null
           consumo_interno?: boolean
           created_at?: string
           dish_id?: string | null
@@ -1300,6 +1368,20 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "sales_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "clientes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_cliente_id_fkey"
+            columns: ["cliente_id"]
+            isOneToOne: false
+            referencedRelation: "v_saldos_credito"
+            referencedColumns: ["cliente_id"]
+          },
           {
             foreignKeyName: "sales_dish_id_fkey"
             columns: ["dish_id"]
@@ -1719,6 +1801,38 @@ export type Database = {
           },
         ]
       }
+      v_saldos_credito: {
+        Row: {
+          cliente_id: string | null
+          kind: string | null
+          name: string | null
+          restaurant_id: string | null
+          saldo: number | null
+        }
+        Insert: {
+          cliente_id?: string | null
+          kind?: string | null
+          name?: string | null
+          restaurant_id?: string | null
+          saldo?: never
+        }
+        Update: {
+          cliente_id?: string | null
+          kind?: string | null
+          name?: string | null
+          restaurant_id?: string | null
+          saldo?: never
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clientes_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_stock_contable: {
         Row: {
           ingredient_id: string | null
@@ -1949,6 +2063,16 @@ export type Database = {
         Returns: Json
       }
       purgar_bitacora: { Args: { p_days?: number }; Returns: number }
+      registrar_cobro_credito: {
+        Args: {
+          p_amount: number
+          p_cliente_id: string
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
       registrar_compra: {
         Args: {
           p_date: string
@@ -2031,6 +2155,24 @@ export type Database = {
           p_qty: number
           p_restaurant: string
           p_service_type: string
+          p_session: string
+          p_unit_price: number
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_venta_credito: {
+        Args: {
+          p_cliente_id: string
+          p_date: string
+          p_dish_id: string
+          p_ingredient_id: string
+          p_item_kind: string
+          p_name: string
+          p_packaging_id?: string
+          p_qty: number
+          p_restaurant: string
+          p_service_type?: string
           p_session: string
           p_unit_price: number
           p_user: string
