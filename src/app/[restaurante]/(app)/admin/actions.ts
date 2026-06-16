@@ -385,6 +385,36 @@ export async function crearCombo(input: {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------- Combo flexible (platos y/o adicionales)
+//  Como crear_combo, pero acepta una lista de partes de cualquier tipo
+//  (sopa/segundo/adicional): así un combo puede incluir adicionales. Lo usa el
+//  formulario de combos del catálogo. NO toca el RPC crear_combo (lo usa la IA).
+export async function armarCombo(input: {
+  parts: { dishId: string; role: "sopa" | "segundo" | "adicional" }[];
+  name?: string;
+  price?: number | null;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  const parts = input.parts.filter((p) => p.dishId);
+  if (parts.length < 2) return { error: "Un combo necesita al menos 2 ítems." };
+
+  const { data, error } = await db.rpc("armar_combo", {
+    p_restaurant: session.restaurant_id,
+    p_parts: parts.map((p) => ({ dish_id: p.dishId, role: p.role })) as unknown as Json,
+    p_name: input.name?.trim() || undefined,
+    p_price: input.price ?? undefined,
+    p_user: session.user_id,
+  });
+  if (error) return { error: error.message };
+  const d = data as { name?: string } | null;
+  await logAdmin(session, db, "plato_config", `Armó el combo ${d?.name ?? "nuevo"}`, {
+    combo: d?.name,
+    parts: parts.length,
+  });
+  revalidatePath(`/${session.slug}/catalogo`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- Receta de un plato (insumos que lleva)
 //  Asigna del inventario qué consume cada plato (proteína, pan, queso…). Los
 //  contables se descuentan al vender; los granel marcan que el plato participa
@@ -675,6 +705,7 @@ export async function editarProductoInventario(input: {
   newQty?: number | null;
   adjustKind?: "correccion" | "ajuste";
   reason?: string | null;
+  consumoVisible?: boolean;
   pin: string;
 }): Promise<ActionResult> {
   const { session, db } = await admin();
@@ -701,6 +732,20 @@ export async function editarProductoInventario(input: {
   });
   if (error) return { error: error.message };
 
+  // Disponibilidad para la cocinera (mismo switch que el alta y la tabla):
+  // consumo on ⟺ granel/pool (ella lo registra); off ⟺ contable/conversión (baja al vender).
+  if (input.consumoVisible != null) {
+    await db
+      .from("ingredients")
+      .update({
+        consumo_visible: input.consumoVisible,
+        kind: input.consumoVisible ? "granel" : "contable",
+        costing_method: input.consumoVisible ? "pool" : "conversion",
+      })
+      .eq("id", input.ingredientId)
+      .eq("restaurant_id", session.restaurant_id);
+  }
+
   const d = data as {
     new_name?: string;
     new_cost?: number;
@@ -715,6 +760,9 @@ export async function editarProductoInventario(input: {
     partes.push(
       `stock ${diff >= 0 ? "+" : ""}${diff} (${d.adjust_kind === "ajuste" ? "conteo físico" : "corrección"})`,
     );
+  }
+  if (input.consumoVisible != null) {
+    partes.push(input.consumoVisible ? "la cocinera lo registra" : "baja al vender");
   }
   await logAdmin(session, db, "producto_editado", partes.join(", "), {
     ingredient: d?.new_name ?? input.name.trim(),

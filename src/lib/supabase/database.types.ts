@@ -1781,6 +1781,16 @@ export type Database = {
         }
         Returns: Json
       }
+      armar_combo: {
+        Args: {
+          p_name?: string
+          p_parts: Json
+          p_price?: number
+          p_restaurant: string
+          p_user?: string
+        }
+        Returns: Json
+      }
       auth_estado: { Args: { p_key: string }; Returns: string }
       auth_intento: {
         Args: {

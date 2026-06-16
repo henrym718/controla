@@ -367,6 +367,7 @@ function EditModal({ item, onClose }: { item: Product; onClose: () => void }) {
   const [salePrice, setSalePrice] = useState(
     item.salePrice != null ? String(item.salePrice) : "",
   );
+  const [consumo, setConsumo] = useState(item.consumoVisible);
   const [qty, setQty] = useState(item.stock != null ? String(item.stock) : "");
   const [adjustKind, setAdjustKind] = useState<"correccion" | "ajuste">("correccion");
   const [reason, setReason] = useState("");
@@ -395,6 +396,8 @@ function EditModal({ item, onClose }: { item: Product; onClose: () => void }) {
         newQty: stockCambio ? Number(qty) || 0 : null,
         adjustKind,
         reason: stockCambio ? reason.trim() : null,
+        consumoVisible:
+          !item.sellable && consumo !== item.consumoVisible ? consumo : undefined,
         pin,
       });
       if (r.error) setMsg(r.error);
@@ -449,6 +452,20 @@ function EditModal({ item, onClose }: { item: Product; onClose: () => void }) {
               No es un producto vendible. Si quieres venderlo, elimínalo y créalo de nuevo
               marcando “de venta”.
             </p>
+          )}
+
+          {!item.sellable && (
+            <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">¿La cocinera registra cuánto usa?</p>
+                <p className="text-[11px] opacity-50">
+                  {consumo
+                    ? "Sí: ella anota lo que gastó (arroz, tomate, carne)."
+                    : "No: se descuenta solo al vender (presa, huevo)."}
+                </p>
+              </div>
+              <Switch checked={consumo} onCheckedChange={(c) => setConsumo(c)} />
+            </div>
           )}
 
           {tieneStock && (
