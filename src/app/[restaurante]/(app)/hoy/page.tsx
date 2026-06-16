@@ -57,50 +57,12 @@ export default async function HoyPage({
       </div>
 
       <Link
-        href={`/${restaurante}/vender`}
-        className="relative overflow-hidden rounded-[32px] bg-coral p-8 text-white"
-      >
-        <span className="blob absolute -right-6 -top-6 h-28 w-28 bg-white/20" />
-        <span className="blob absolute -bottom-8 left-12 h-20 w-20 bg-white/10" />
-        <span className="relative block text-2xl font-bold leading-tight">
-          Registrar venta
-        </span>
-        <span className="relative mt-1 block text-sm text-white/80">
-          Marca los platos y cobra al toque
-        </span>
-      </Link>
-
-      <div className="grid grid-cols-2 gap-3">
-        <Link
-          href={`/${restaurante}/consumo`}
-          className="flex min-h-24 flex-col justify-between rounded-3xl bg-lav p-4"
-        >
-          <span className="text-base font-bold leading-tight">Registrar consumo</span>
-          <span className="text-xs opacity-60">Lo que usaste para cocinar</span>
-        </Link>
-        <Link
-          href={`/${restaurante}/compras`}
-          className="flex min-h-24 flex-col justify-between rounded-3xl bg-sand p-4"
-        >
-          <span className="text-base font-bold leading-tight">Registrar compra</span>
-          <span className="text-xs opacity-60">Lo que compraste hoy</span>
-        </Link>
-      </div>
-
-      <Link href={`/${restaurante}/gastos`} className="rounded-3xl bg-mint p-5">
-        <span className="block text-lg font-bold leading-tight">Registrar gasto</span>
-        <span className="mt-0.5 block text-sm opacity-60">
-          Servicios, compras o lo que se pagó hoy
-        </span>
-      </Link>
-
-      <Link
         href={`/${restaurante}/menu`}
         className="rounded-3xl border border-ink/10 p-4"
       >
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold">Menú de hoy</span>
-          <span className="text-xs font-semibold text-coral">
+          <span className="text-xs font-semibold text-blue">
             {menuItems.length ? "Editar" : "Definir"}
           </span>
         </div>
@@ -126,16 +88,37 @@ export default async function HoyPage({
       </Link>
 
       <Link
-        href={`/${restaurante}/capturar`}
-        className="relative overflow-hidden rounded-[32px] bg-ink p-8 text-white"
+        href={`/${restaurante}/vender`}
+        className="relative overflow-hidden rounded-[28px] bg-blue p-6 text-white"
       >
-        <span className="blob absolute -right-6 -top-6 h-28 w-28 bg-coral/80" />
-        <span className="blob absolute -bottom-8 left-10 h-20 w-20 bg-purple/70" />
-        <span className="relative block text-2xl font-bold leading-tight">
-          Hablar y registrar
+        <span className="blob absolute -right-6 -top-6 h-24 w-24 bg-white/20" />
+        <span className="blob absolute -bottom-8 left-12 h-16 w-16 bg-white/10" />
+        <span className="relative block text-xl font-bold leading-tight">
+          Registrar venta
         </span>
-        <span className="relative mt-1 block text-sm text-white/70">
-          Ventas, gastos, caja… di lo que pasó
+        <span className="relative mt-1 block text-sm text-white/85">
+          Marca los platos y cobra al toque
+        </span>
+      </Link>
+
+      <Link href={`/${restaurante}/gastos`} className="rounded-3xl bg-mint p-5">
+        <span className="block text-lg font-bold leading-tight">Registrar gasto</span>
+        <span className="mt-0.5 block text-sm opacity-60">
+          Servicios o lo que se pagó hoy
+        </span>
+      </Link>
+
+      <Link href={`/${restaurante}/compras`} className="rounded-3xl bg-sand p-5">
+        <span className="block text-lg font-bold leading-tight">Registrar inventario</span>
+        <span className="mt-0.5 block text-sm opacity-60">
+          Insumos que compraste hoy
+        </span>
+      </Link>
+
+      <Link href={`/${restaurante}/consumo`} className="rounded-3xl bg-lav p-5">
+        <span className="block text-lg font-bold leading-tight">Registrar consumo</span>
+        <span className="mt-0.5 block text-sm opacity-60">
+          Lo que usaste para cocinar
         </span>
       </Link>
 
