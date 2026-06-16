@@ -26,10 +26,16 @@ const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 export default function CierreClient({
   resumen,
   ventasDetalle,
+  credito,
+  cobrosCredito,
+  cuentasMesa,
 }: {
   slug: string;
   resumen: CierreResumen;
   ventasDetalle: { name: string; qty: number; total: number }[];
+  credito: number;
+  cobrosCredito: number;
+  cuentasMesa: { count: number; total: number };
 }) {
   const opening = Number(resumen.caja.apertura) || 0;
   const expected = Number(resumen.caja.esperada) || 0;
@@ -62,6 +68,20 @@ export default function CierreClient({
         subtitle={`Cuadre de caja${resumen.shift ? ` · ${resumen.shift}` : ""}`}
       />
 
+      {/* AVISO: cuentas de mesa abiertas (comida servida sin cobrar) */}
+      {cuentasMesa.count > 0 && (
+        <Card className="border-coral/30 bg-coral/5 p-4">
+          <p className="text-sm font-bold text-coral">
+            ⚠️ {cuentasMesa.count} cuenta{cuentasMesa.count === 1 ? "" : "s"} de mesa sin cobrar
+            ({money(cuentasMesa.total)})
+          </p>
+          <p className="mt-0.5 text-xs opacity-70">
+            Esa comida ya salió. Cóbralas o elimínalas en “Vender → Cuentas abiertas” antes de
+            cerrar, o parecerá faltante.
+          </p>
+        </Card>
+      )}
+
       {/* RESUMEN DEL TURNO */}
       <Card className="p-4">
         <div className="flex items-center justify-between">
@@ -74,6 +94,7 @@ export default function CierreClient({
           <Sub label="Efectivo" value={resumen.ventas.efectivo} />
           <Sub label="Transferencia" value={resumen.ventas.transferencia} />
           {resumen.ventas.otro > 0 && <Sub label="Otro" value={resumen.ventas.otro} />}
+          {credito > 0 && <Sub label="Crédito · por cobrar (no es efectivo)" value={credito} />}
         </div>
         <div className="mt-2 flex items-center justify-between border-t border-ink/10 pt-2 text-sm">
           <span className="font-semibold">Costos del turno</span>
@@ -117,6 +138,7 @@ export default function CierreClient({
         <p className="mb-1 text-sm font-semibold">Caja</p>
         <Sub label="Caja inicial" value={opening} />
         {resumen.aportes > 0 && <Sub label="+ Aportes (jefa / ingresos)" value={resumen.aportes} />}
+        {cobrosCredito > 0 && <Sub label="↳ incluye cobros de crédito" value={cobrosCredito} />}
         <div className="flex items-center justify-between border-t border-ink/10 py-1.5 pt-2 text-sm font-semibold">
           <span>= Debe haber en caja</span>
           <span>{money(expected)}</span>

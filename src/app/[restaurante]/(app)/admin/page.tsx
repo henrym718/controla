@@ -43,6 +43,7 @@ export default async function AdminPage({
       title: "Configuración",
       items: [
         { href: `${base}/usuarios`, label: "Usuarios y PINs", tone: "bg-lav" },
+        { href: `${base}/clientes`, label: "Clientes (fiado)", tone: "bg-mint" },
         { href: `${base}/turnos`, label: "Turnos", tone: "bg-peach" },
       ],
     },

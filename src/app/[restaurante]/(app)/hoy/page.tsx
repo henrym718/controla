@@ -15,29 +15,37 @@ export default async function HoyPage({
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
-  const [{ data: caja }, { data: ventas }, { data: menu }] = await Promise.all([
-    db
-      .from("v_caja_turno")
-      .select("caja_esperada,opening_cash")
-      .eq("shift_session_id", session.shift_session_id)
-      .maybeSingle(),
-    db
-      .from("sales")
-      .select("total")
-      .eq("shift_session_id", session.shift_session_id)
-      .is("voided_at", null)
-      .eq("consumo_interno", false),
-    db
-      .from("daily_menu")
-      .select("price,available,dishes(name)")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("business_date", businessDate())
-      .eq("shift_id", session.shift_id)
-      .order("sort_order"),
-  ]);
+  const [{ data: caja }, { data: ventas }, { data: menu }, { data: saldos }] =
+    await Promise.all([
+      db
+        .from("v_caja_turno")
+        .select("caja_esperada,opening_cash")
+        .eq("shift_session_id", session.shift_session_id)
+        .maybeSingle(),
+      db
+        .from("sales")
+        .select("total")
+        .eq("shift_session_id", session.shift_session_id)
+        .is("voided_at", null)
+        .eq("consumo_interno", false),
+      db
+        .from("daily_menu")
+        .select("price,available,dishes(name)")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("business_date", businessDate())
+        .eq("shift_id", session.shift_id)
+        .order("sort_order"),
+      db
+        .from("v_saldos_credito")
+        .select("saldo")
+        .eq("restaurant_id", session.restaurant_id)
+        .gt("saldo", 0),
+    ]);
 
   const totalVentas = (ventas ?? []).reduce((s, v) => s + Number(v.total), 0);
   const menuItems = (menu ?? []).filter((m) => m.available);
+  const deudores = saldos ?? [];
+  const totalPorCobrar = deudores.reduce((s, d) => s + Number(d.saldo), 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -120,6 +128,24 @@ export default async function HoyPage({
         <span className="mt-0.5 block text-sm opacity-60">
           Lo que usaste para cocinar
         </span>
+      </Link>
+
+      <Link href={`/${restaurante}/cuentas-por-cobrar`} className="rounded-3xl bg-peach p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <span className="block text-lg font-bold leading-tight">Cuentas por cobrar</span>
+            <span className="mt-0.5 block text-sm opacity-60">
+              {deudores.length
+                ? `${deudores.length} ${deudores.length === 1 ? "persona debe" : "personas deben"}`
+                : "Ventas a crédito (fiado)"}
+            </span>
+          </div>
+          {totalPorCobrar > 0 && (
+            <span className="shrink-0 text-lg font-bold text-coral">
+              ${totalPorCobrar.toFixed(2)}
+            </span>
+          )}
+        </div>
       </Link>
 
       <div className="grid grid-cols-2 gap-3">

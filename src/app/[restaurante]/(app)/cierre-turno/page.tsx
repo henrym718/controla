@@ -63,5 +63,45 @@ export default async function CierrePage({
     .map(([name, v]) => ({ name, qty: v.qty, total: v.total }))
     .sort((a, b) => b.total - a.total);
 
-  return <CierreClient slug={restaurante} resumen={resumen} ventasDetalle={ventasDetalle} />;
+  // Crédito y cuentas de mesa (informativo; no afectan el cuadre de caja):
+  //  - ventas a crédito de este turno (no es efectivo; se cobra después)
+  //  - cobros de crédito recibidos (ya van dentro de los aportes/ingresos)
+  //  - cuentas de mesa abiertas (comida ya servida sin cobrar → avisar)
+  const [{ data: creditoRows }, { data: cobroRows }, { data: cuentasRows }] =
+    await Promise.all([
+      db
+        .from("sales")
+        .select("total")
+        .eq("shift_session_id", session.shift_session_id)
+        .eq("payment_method", "credito")
+        .is("voided_at", null),
+      db
+        .from("cash_movements")
+        .select("amount")
+        .eq("shift_session_id", session.shift_session_id)
+        .eq("categoria", "cobro_credito")
+        .is("voided_at", null),
+      db
+        .from("cuentas_mesa")
+        .select("total")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("status", "abierta"),
+    ]);
+  const credito = (creditoRows ?? []).reduce((s, r) => s + Number(r.total), 0);
+  const cobrosCredito = (cobroRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const cuentasMesa = {
+    count: (cuentasRows ?? []).length,
+    total: (cuentasRows ?? []).reduce((s, r) => s + Number(r.total), 0),
+  };
+
+  return (
+    <CierreClient
+      slug={restaurante}
+      resumen={resumen}
+      ventasDetalle={ventasDetalle}
+      credito={credito}
+      cobrosCredito={cobrosCredito}
+      cuentasMesa={cuentasMesa}
+    />
+  );
 }

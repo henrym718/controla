@@ -21,6 +21,8 @@ export interface CuadreTurno {
   deposit_amount: number | null;
   ventas: number;
   ventas_efectivo: number;
+  ventas_credito?: number;
+  cobros_credito?: number;
   gastos: number;
   egresos: number;
   aportes: number;
@@ -42,9 +44,11 @@ function hora(iso: string | null): string {
 export default function CuadresClient({
   today,
   initial,
+  cuentasMesa,
 }: {
   today: string;
   initial: CuadresDia;
+  cuentasMesa: { count: number; total: number };
 }) {
   const [date, setDate] = useState(today);
   const [data, setData] = useState<CuadresDia>(initial);
@@ -71,6 +75,18 @@ export default function CuadresClient({
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-bold tracking-tight">Cuadres de caja</h1>
       <DayNav value={date} today={today} onChange={change} />
+
+      {cuentasMesa.count > 0 && (
+        <div className="rounded-2xl border border-coral/30 bg-coral/5 px-4 py-3">
+          <p className="text-sm font-bold text-coral">
+            🧾 {cuentasMesa.count} cuenta{cuentasMesa.count === 1 ? "" : "s"} de mesa abierta
+            {cuentasMesa.count === 1 ? "" : "s"} ({money(cuentasMesa.total)})
+          </p>
+          <p className="mt-0.5 text-xs opacity-70">
+            Comida servida sin cobrar todavía. Se cobran en “Vender → Cuentas abiertas”.
+          </p>
+        </div>
+      )}
 
       <div className={loading ? "pointer-events-none opacity-50 transition" : "transition"}>
         <div className="flex flex-col gap-4">
@@ -142,6 +158,11 @@ function TurnoCard({ t }: { t: CuadreTurno }) {
           <p className="text-[11px] opacity-60">Ventas</p>
           <p className="text-base font-bold">{money(t.ventas)}</p>
           <p className="text-[11px] opacity-50">Efectivo {money(t.ventas_efectivo)}</p>
+          {Number(t.ventas_credito ?? 0) > 0 && (
+            <p className="text-[11px] font-semibold text-coral">
+              Crédito {money(t.ventas_credito)}
+            </p>
+          )}
         </div>
         <div className="rounded-2xl bg-ink/[0.03] p-3">
           <p className="text-[11px] opacity-60">Costos</p>
@@ -157,6 +178,9 @@ function TurnoCard({ t }: { t: CuadreTurno }) {
         <div className={sub}><span>Caja inicial</span><span>{money(t.opening_cash)}</span></div>
         {Number(t.aportes) > 0 && (
           <div className={sub}><span>+ Aportes (jefa / ingresos)</span><span>{money(t.aportes)}</span></div>
+        )}
+        {Number(t.cobros_credito ?? 0) > 0 && (
+          <div className={sub}><span>↳ incluye cobros de crédito</span><span>{money(t.cobros_credito)}</span></div>
         )}
         <div className="flex items-center justify-between py-1 text-xs font-semibold">
           <span>{cerrado ? "= Caja esperada" : "= Caja esperada (en vivo)"}</span>
