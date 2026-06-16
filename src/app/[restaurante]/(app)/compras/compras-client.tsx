@@ -88,14 +88,14 @@ export default function ComprasClient({
                     className="flex items-center gap-3 rounded-2xl border border-ink/10 bg-white px-4 py-3 text-left"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-semibold">{p.name}</p>
-                      <p className="text-xs opacity-50">
+                      <p className="font-semibold leading-tight break-words">{p.name}</p>
+                      <p className="mt-0.5 text-xs opacity-50">
                         quedan {p.stock}
                         {p.unit ? ` ${p.unit}` : ""}
                         {p.sellable ? " · de venta" : ""}
                       </p>
                     </div>
-                    <span className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white">
+                    <span className="shrink-0 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white">
                       Comprar
                     </span>
                   </button>

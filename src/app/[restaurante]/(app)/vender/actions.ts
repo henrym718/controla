@@ -23,6 +23,7 @@ export interface VentaResult {
   ok?: boolean;
   total?: number;
   count?: number;
+  note?: string;
 }
 
 /**
@@ -86,4 +87,60 @@ export async function registrarVenta(lineas: VentaLinea[]): Promise<VentaResult>
 
   revalidatePath(`/${session.slug}/hoy`);
   return { ok: true, total, count: items.length };
+}
+
+/**
+ * Consumo de empleado (comida gratis del personal). Cada PLATO del carrito se
+ * registra a $0 con `registrar_consumo_interno`: descuenta su proteína del
+ * inventario (sí es un costo del día) pero NO es ingreso y NO toca la caja del
+ * turno, así que no afecta el cuadre de las chicas. Los productos de inventario
+ * (colas, aguas) aún no entran aquí — llegan con las cuentas por cobrar.
+ */
+export async function registrarConsumoEmpleado(lineas: VentaLinea[]): Promise<VentaResult> {
+  const session = await getSession();
+  if (!session) return { error: "Sesión expirada. Vuelve a entrar." };
+
+  const todo = (lineas ?? []).filter((l) => l && l.id && l.qty > 0);
+  const platos = todo.filter((l) => l.kind === "plato");
+  const productos = todo.filter((l) => l.kind === "producto").length;
+  if (platos.length === 0)
+    return { error: "El consumo de empleado es solo para platos del menú por ahora." };
+
+  const db = createAdminClient();
+  let count = 0;
+
+  for (const it of platos) {
+    const { data, error } = await db.rpc("registrar_consumo_interno", {
+      p_restaurant: session.restaurant_id,
+      p_session: session.shift_session_id,
+      p_user: session.user_id,
+      p_date: businessDate(),
+      p_dish_id: it.id,
+      p_name: it.name,
+      p_qty: it.qty,
+    });
+    if (error) return { error: error.message };
+
+    const opId = (data as { op_id?: string } | null)?.op_id ?? null;
+    await logActivity(db, {
+      restaurantId: session.restaurant_id,
+      userId: session.user_id,
+      actorName: session.user_name,
+      shiftSessionId: session.shift_session_id,
+      source: "manual",
+      event: "consumo",
+      description: `Consumo de empleado: ${it.qty} × ${it.name} (${session.user_name})`,
+      metadata: { dish: it.name, qty: it.qty, interno: true },
+      opId,
+    });
+    count += it.qty;
+  }
+
+  revalidatePath(`/${session.slug}/hoy`);
+  const platosTxt = `${count} plato${count === 1 ? "" : "s"}`;
+  return {
+    ok: true,
+    count,
+    note: productos > 0 ? `${platosTxt} · las colas/productos no se incluyen aún` : platosTxt,
+  };
 }

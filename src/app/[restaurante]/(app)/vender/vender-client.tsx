@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { registrarVenta, type VentaLinea } from "./actions";
+import { registrarVenta, registrarConsumoEmpleado, type VentaLinea } from "./actions";
 
 export interface SellItem {
   key: string; // "plato:<id>" | "prod:<id>"
@@ -30,6 +30,7 @@ export default function VenderClient({
   const [openExtras, setOpenExtras] = useState(false);
   const [search, setSearch] = useState("");
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmConsumo, setConfirmConsumo] = useState(false);
   const [pending, start] = useTransition();
 
   const byKey = useMemo(() => {
@@ -89,6 +90,33 @@ export default function VenderClient({
     });
   };
 
+  // Consumo de empleado: el mismo carrito, pero gratis (no es venta, no toca la
+  // caja). Pide confirmación para no registrarlo por error en vez de cobrar.
+  const consumoEmpleado = () => {
+    if (count === 0 || pending) return;
+    setConfirmConsumo(false);
+    const payload: VentaLinea[] = lines.map(([k, q]) => {
+      const it = byKey.get(k)!;
+      return { kind: it.kind, id: it.id, name: it.name, unitPrice: it.price, qty: q };
+    });
+    start(async () => {
+      const r = await registrarConsumoEmpleado(payload);
+      if (r.error) {
+        flashMsg(false, r.error);
+      } else {
+        flashMsg(true, `Consumo de empleado${r.note ? ` · ${r.note}` : ""}`);
+        // Quita solo los platos consumidos; deja los productos (colas) en el
+        // carrito por si aún se van a cobrar — la Fase 1 no los toma como consumo.
+        setCart((c) => {
+          const next: Record<string, number> = {};
+          for (const [k, v] of Object.entries(c)) if (k.startsWith("prod:")) next[k] = v;
+          return next;
+        });
+        setSearch("");
+      }
+    });
+  };
+
   const vacio = principales.length === 0 && extras.length === 0;
 
   return (
@@ -143,20 +171,11 @@ export default function VenderClient({
                     Nada con “{search.trim()}”.
                   </p>
                 ) : (
-                  // Resultado: una sola columna. Plato principal grande; adicional
-                  // / producto más pequeño. Se agrega o quita ahí mismo.
+                  // Resultado: una sola columna. Platos y adicionales del MISMO
+                  // tamaño y con el nombre completo (sin cortar). Se agrega o
+                  // quita ahí mismo.
                   <div className="flex flex-col gap-2">
-                    {matchPrincipales.map((it) => (
-                      <ResultRow
-                        key={it.key}
-                        item={it}
-                        qty={cart[it.key] ?? 0}
-                        onAdd={() => add(it.key)}
-                        onRemove={() => remove(it.key)}
-                        big
-                      />
-                    ))}
-                    {matchExtras.map((it) => (
+                    {[...matchPrincipales, ...matchExtras].map((it) => (
                       <ResultRow
                         key={it.key}
                         item={it}
@@ -205,21 +224,57 @@ export default function VenderClient({
         </div>
       </div>
 
-      {/* Botón principal: registrar la venta */}
+      {/* Acciones de la venta: cobrar ahora, o marcar consumo de empleado.
+          (El botón "Por cobrar" / mesas llega en la Fase 2 con su backend.) */}
       {!vacio && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 px-5 pb-6">
-          <div className="mx-auto max-w-md">
+          <div className="mx-auto flex max-w-md flex-col gap-2">
             <button
               onClick={registrar}
               disabled={count === 0 || pending}
               className="pointer-events-auto flex w-full items-center justify-center rounded-full bg-coral py-4 text-lg font-bold text-white shadow-lg transition active:scale-[0.99] disabled:opacity-40"
             >
               {pending
-                ? "Registrando…"
+                ? "Procesando…"
                 : count === 0
-                  ? "Registrar venta"
-                  : `Registrar venta · ${money(total)}`}
+                  ? "Cobrar ahora"
+                  : `Cobrar ahora · ${money(total)}`}
             </button>
+            <button
+              onClick={() => setConfirmConsumo(true)}
+              disabled={count === 0 || pending}
+              className="pointer-events-auto flex w-full items-center justify-center rounded-full border border-ink/15 bg-white py-3.5 text-base font-bold text-ink transition active:scale-[0.99] disabled:opacity-40"
+            >
+              Consumo empleado
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmar consumo de empleado (gratis, no es venta) */}
+      {confirmConsumo && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-ink/30 px-8">
+          <div className="float-in w-full max-w-sm rounded-3xl bg-white px-7 py-6 text-center shadow-xl">
+            <p className="text-3xl">🍽️</p>
+            <p className="mt-2 text-lg font-bold">¿Marcar como consumo de empleado?</p>
+            <p className="mx-auto mt-1 max-w-[17rem] text-sm opacity-60">
+              Es gratis: no suma a la venta y no afecta tu caja. Solo descuenta los
+              ingredientes del inventario.
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => setConfirmConsumo(false)}
+                className="flex-1 rounded-full border border-ink/15 bg-white py-3 font-bold text-ink"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={consumoEmpleado}
+                className="flex-1 rounded-full bg-ink py-3 font-bold text-white"
+              >
+                Sí, consumo
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -324,29 +379,28 @@ function SearchBar({
 }
 
 // --------------------------------------------------------------------------- Fila de resultado de búsqueda
-//  Una por línea. big = plato principal (grande); si no, adicional/producto (más pequeño).
+//  Una por línea, TODAS del mismo tamaño (plato y adicional igual). El nombre se
+//  muestra completo: si no entra en una línea, salta a dos o tres.
 function ResultRow({
   item,
   qty,
   onAdd,
   onRemove,
-  big = false,
 }: {
   item: SellItem;
   qty: number;
   onAdd: () => void;
   onRemove: () => void;
-  big?: boolean;
 }) {
   const active = qty > 0;
   return (
     <div
-      className={`flex items-center gap-2 rounded-2xl border transition ${
+      className={`flex items-center gap-2 rounded-2xl border px-4 py-4 transition ${
         active ? "border-ink bg-mint" : "border-ink/10 bg-white"
-      } ${big ? "px-4 py-4" : "px-3 py-2.5"}`}
+      }`}
     >
       <button onClick={onAdd} className="min-w-0 flex-1 text-left">
-        <p className={`truncate font-bold leading-tight ${big ? "text-lg" : "text-sm"}`}>
+        <p className="text-base font-bold leading-snug">
           {item.name}
           {item.isCombo && (
             <span className="ml-1.5 inline-block rounded-full bg-white/70 px-2 py-0.5 align-middle text-[10px] font-semibold">
@@ -354,11 +408,7 @@ function ResultRow({
             </span>
           )}
         </p>
-        <p
-          className={`mt-0.5 font-semibold ${big ? "text-sm" : "text-xs"} ${
-            active ? "opacity-70" : "opacity-50"
-          }`}
-        >
+        <p className={`mt-0.5 text-sm font-semibold ${active ? "opacity-70" : "opacity-50"}`}>
           {money(item.price)}
         </p>
       </button>
@@ -367,25 +417,17 @@ function ResultRow({
           <button
             onClick={onRemove}
             aria-label="Quitar uno"
-            className={`flex items-center justify-center rounded-full bg-white font-bold leading-none ${
-              big ? "h-9 w-9 text-2xl" : "h-8 w-8 text-xl"
-            }`}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-2xl font-bold leading-none"
           >
             −
           </button>
-          <span
-            className={`text-center font-bold tabular-nums ${big ? "min-w-6 text-xl" : "min-w-5"}`}
-          >
-            {qty}
-          </span>
+          <span className="min-w-6 shrink-0 text-center text-xl font-bold tabular-nums">{qty}</span>
         </>
       )}
       <button
         onClick={onAdd}
         aria-label="Agregar uno"
-        className={`flex items-center justify-center rounded-full bg-ink font-bold leading-none text-white ${
-          big ? "h-9 w-9 text-2xl" : "h-8 w-8 text-xl"
-        }`}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-2xl font-bold leading-none text-white"
       >
         +
       </button>
@@ -443,7 +485,7 @@ function ExtrasDrawer({
                 }`}
               >
                 <button onClick={() => onAdd(it.key)} className="min-w-0 flex-1 text-left">
-                  <p className="truncate text-sm font-semibold">{it.name}</p>
+                  <p className="text-sm font-semibold leading-snug">{it.name}</p>
                   <p className="text-xs opacity-50">{money(it.price)}</p>
                 </button>
                 {active && (
@@ -451,17 +493,17 @@ function ExtrasDrawer({
                     <button
                       onClick={() => onRemove(it.key)}
                       aria-label="Quitar uno"
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-xl font-bold leading-none"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xl font-bold leading-none"
                     >
                       −
                     </button>
-                    <span className="min-w-5 text-center font-bold tabular-nums">{qty}</span>
+                    <span className="min-w-5 shrink-0 text-center font-bold tabular-nums">{qty}</span>
                   </>
                 )}
                 <button
                   onClick={() => onAdd(it.key)}
                   aria-label="Agregar uno"
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-xl font-bold leading-none text-white"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-xl font-bold leading-none text-white"
                 >
                   +
                 </button>
