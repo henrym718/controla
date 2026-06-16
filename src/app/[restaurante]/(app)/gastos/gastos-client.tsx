@@ -102,9 +102,9 @@ export default function GastosClient({ slug }: { slug: string }) {
                   value={r.name}
                   onChange={(e) => setRow(r.id, { name: e.target.value })}
                   placeholder="¿En qué gastaste?"
-                  className="min-w-0 flex-1 rounded-2xl border border-ink/15 bg-white px-4 py-3 text-base outline-none focus:border-ink/40"
+                  className="min-w-0 flex-1 rounded-2xl border-2 border-ink/15 bg-white px-4 py-3 text-base shadow-sm outline-none transition placeholder:text-ink/35 focus:border-blue focus:ring-4 focus:ring-blue/15"
                 />
-                <div className="flex items-center rounded-2xl border border-ink/15 bg-white pl-3 focus-within:border-ink/40">
+                <div className="flex items-center rounded-2xl border-2 border-ink/15 bg-white pl-3 shadow-sm transition focus-within:border-blue focus-within:ring-4 focus-within:ring-blue/15">
                   <span className="text-base opacity-40">$</span>
                   <input
                     inputMode="decimal"
@@ -133,9 +133,12 @@ export default function GastosClient({ slug }: { slug: string }) {
 
           <button
             onClick={addRow}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-ink/25 py-3 text-sm font-semibold text-ink/60 transition active:scale-[0.99]"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-mint py-3.5 text-sm font-bold text-ink shadow-sm transition active:scale-[0.99]"
           >
-            ＋ Agregar otro gasto
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-ink/10 text-base leading-none">
+              ＋
+            </span>
+            Agregar otro gasto
           </button>
 
           <p className="mt-4 text-center text-xs opacity-50">
