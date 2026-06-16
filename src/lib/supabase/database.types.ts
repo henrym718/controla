@@ -406,6 +406,93 @@ export type Database = {
           },
         ]
       }
+      cuentas_mesa: {
+        Row: {
+          business_date: string
+          cobrada_at: string | null
+          cobrada_by: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          items: Json
+          label: string
+          op_id: string | null
+          restaurant_id: string
+          shift_session_id: string | null
+          status: string
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          business_date?: string
+          cobrada_at?: string | null
+          cobrada_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          items?: Json
+          label: string
+          op_id?: string | null
+          restaurant_id: string
+          shift_session_id?: string | null
+          status?: string
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          business_date?: string
+          cobrada_at?: string | null
+          cobrada_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          items?: Json
+          label?: string
+          op_id?: string | null
+          restaurant_id?: string
+          shift_session_id?: string | null
+          status?: string
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cuentas_mesa_cobrada_by_fkey"
+            columns: ["cobrada_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuentas_mesa_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuentas_mesa_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuentas_mesa_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "shift_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cuentas_mesa_shift_session_id_fkey"
+            columns: ["shift_session_id"]
+            isOneToOne: false
+            referencedRelation: "v_caja_turno"
+            referencedColumns: ["shift_session_id"]
+          },
+        ]
+      }
       daily_close: {
         Row: {
           business_date: string
@@ -1967,6 +2054,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      cobrar_cuenta_mesa: {
+        Args: {
+          p_cuenta_id: string
+          p_date: string
+          p_payment_method?: string
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
       }
       consumir_insumo: {
         Args: {
