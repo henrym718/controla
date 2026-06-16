@@ -9,7 +9,24 @@ export interface Insumo {
   name: string;
   kind: "contable" | "granel";
   unit: string | null;
+  stock: number;
 }
+
+const PLURAL: Record<string, string> = {
+  unidad: "unidades",
+  libra: "libras",
+  kilo: "kilos",
+  gramo: "gramos",
+  funda: "fundas",
+  litro: "litros",
+  ml: "ml",
+};
+
+// La unidad ES la presentación del insumo: "12 libras", "1 libra", "0.5 kilos".
+const unitLabel = (unit: string | null, n: number) =>
+  !unit ? "" : n === 1 ? unit : PLURAL[unit] ?? unit;
+
+const fmtNum = (n: number) => String(Math.round(n * 100) / 100);
 
 export default function ConsumoClient({
   slug,
@@ -128,7 +145,17 @@ export default function ConsumoClient({
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold">{i.name}</p>
-                        {i.unit && <p className="text-xs opacity-50">en {i.unit}</p>}
+                        <p
+                          className={`text-xs ${
+                            i.stock > 0 ? "opacity-50" : "font-semibold text-coral"
+                          }`}
+                        >
+                          {i.stock > 0
+                            ? `Quedan ${fmtNum(i.stock)}${
+                                i.unit ? ` ${unitLabel(i.unit, i.stock)}` : ""
+                              }`
+                            : "Sin stock"}
+                        </p>
                       </div>
                       <input
                         inputMode="decimal"

@@ -5,7 +5,7 @@ import { useState, useTransition, type ReactNode } from "react";
 import { Button, Card, Field, Input, PageTitle } from "@/components/ui";
 import {
   crearPlato,
-  crearCombo,
+  armarCombo,
   crearAdicional,
   actualizarPlato,
   eliminarPlato,
@@ -67,12 +67,14 @@ export default function CatalogoClient({
   const contables = ingredients.filter((i) => i.kind === "contable");
 
   const nameById = new Map(dishes.map((d) => [d.id, d.name]));
-  const partsByCombo = new Map<string, { sopa?: string; segundo?: string }>();
+  const ROLE_ORDER: Record<string, number> = { sopa: 0, segundo: 1, adicional: 2 };
+  const partsByCombo = new Map<string, { role: string; name: string }[]>();
   for (const p of parts) {
-    const e = partsByCombo.get(p.comboId) ?? {};
-    if (p.role === "sopa") e.sopa = nameById.get(p.partId);
-    else e.segundo = nameById.get(p.partId);
-    partsByCombo.set(p.comboId, e);
+    const name = nameById.get(p.partId);
+    if (!name) continue;
+    const arr = partsByCombo.get(p.comboId) ?? [];
+    arr.push({ role: p.role, name });
+    partsByCombo.set(p.comboId, arr);
   }
   const recipeByDish = new Map<string, { ingredientId: string; qty: number }[]>();
   for (const c of components) {
@@ -134,7 +136,13 @@ export default function CatalogoClient({
         <Section title="Combos" count={combos.length}>
           {combos.map((d) => {
             const pr = partsByCombo.get(d.id);
-            const sub = pr ? [pr.sopa, pr.segundo].filter(Boolean).join(" + ") : undefined;
+            const sub = pr
+              ? pr
+                  .slice()
+                  .sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9))
+                  .map((x) => x.name)
+                  .join(" + ")
+              : undefined;
             return (
               <DishCard key={d.id} dish={d} subtitle={sub} onEdit={() => setEditDish(d)} start={start} />
             );
@@ -158,7 +166,12 @@ export default function CatalogoClient({
       )}
 
       {showAdd && (
-        <AddCatalogModal platos={platos} contables={contables} onClose={() => setShowAdd(false)} />
+        <AddCatalogModal
+          platos={platos}
+          adicionales={adicionales}
+          contables={contables}
+          onClose={() => setShowAdd(false)}
+        />
       )}
       {recipeDish && (
         <RecipeModal
@@ -180,10 +193,12 @@ type AddTab = "plato" | "combo" | "adicional";
 
 function AddCatalogModal({
   platos,
+  adicionales,
   contables,
   onClose,
 }: {
   platos: Dish[];
+  adicionales: Dish[];
   contables: Ingredient[];
   onClose: () => void;
 }) {
@@ -219,7 +234,9 @@ function AddCatalogModal({
         </div>
 
         {tab === "plato" && <FormPlato onDone={onClose} />}
-        {tab === "combo" && <FormCombo platos={platos} onDone={onClose} />}
+        {tab === "combo" && (
+          <FormCombo platos={platos} adicionales={adicionales} onDone={onClose} />
+        )}
         {tab === "adicional" && <FormAdicional contables={contables} onDone={onClose} />}
       </div>
     </div>
@@ -296,30 +313,54 @@ function FormPlato({ onDone }: { onDone: () => void }) {
 }
 
 // --------------------------------------------------------------------------- Form: Combo
-function FormCombo({ platos, onDone }: { platos: Dish[]; onDone: () => void }) {
-  const [sopa, setSopa] = useState("");
-  const [segundo, setSegundo] = useState("");
+//  Un combo une 2+ ítems del catálogo: sopas, platos principales y/o
+//  ADICIONALES. El rol se deduce del ítem (sopa / segundo / adicional). La
+//  receta y el costo se suman solos; el precio del día se fija en el menú.
+function FormCombo({
+  platos,
+  adicionales,
+  onDone,
+}: {
+  platos: Dish[];
+  adicionales: Dish[];
+  onDone: () => void;
+}) {
+  const sopas = platos.filter((d) => d.category === "sopa");
+  const principales = platos.filter((d) => d.category !== "sopa");
+  const [sel, setSel] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  if (platos.length < 2) {
+  if (platos.length + adicionales.length < 2) {
     return (
       <p className="rounded-2xl bg-ink/[0.03] px-3 py-6 text-center text-sm opacity-60">
-        Crea al menos dos platos (una sopa y un segundo) y aquí podrás unirlos en un combo.
+        Crea al menos dos ítems (platos o adicionales) y aquí podrás unirlos en un combo.
       </p>
     );
   }
 
+  const toggle = (id: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const roleOf = (d: Dish): "sopa" | "segundo" | "adicional" =>
+    d.isExtra ? "adicional" : d.category === "sopa" ? "sopa" : "segundo";
+
   const crear = () => {
     setMsg(null);
-    if (!sopa || !segundo) return setMsg("Elige la sopa y el segundo.");
-    if (sopa === segundo) return setMsg("Deben ser platos distintos.");
+    if (sel.size < 2) return setMsg("Elige al menos 2 ítems para el combo.");
+    const parts = [...platos, ...adicionales]
+      .filter((d) => sel.has(d.id))
+      .map((d) => ({ dishId: d.id, role: roleOf(d) }));
     start(async () => {
-      const r = await crearCombo({
-        sopaId: sopa,
-        segundoId: segundo,
+      const r = await armarCombo({
+        parts,
         name: name.trim() || undefined,
         price: Number(price) || null,
       });
@@ -331,28 +372,14 @@ function FormCombo({ platos, onDone }: { platos: Dish[]; onDone: () => void }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm opacity-60">
-        Une una sopa y un segundo. La receta y el costo se arman solos; el precio del día va en el menú.
+        Marca lo que entra al combo (mínimo 2). Puedes mezclar platos y adicionales; la receta y el
+        costo se arman solos y el precio del día va en el menú.
       </p>
-      <Field label="Sopa">
-        <select className={selectCls} value={sopa} onChange={(e) => setSopa(e.target.value)}>
-          <option value="">Elige la sopa…</option>
-          {platos.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Segundo">
-        <select className={selectCls} value={segundo} onChange={(e) => setSegundo(e.target.value)}>
-          <option value="">Elige el segundo…</option>
-          {platos.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-      </Field>
+
+      <ComboPick title="Sopas" items={sopas} sel={sel} onToggle={toggle} />
+      <ComboPick title="Platos principales" items={principales} sel={sel} onToggle={toggle} />
+      <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
+
       <Field label="Nombre del combo (opcional)">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Combo del día" />
       </Field>
@@ -360,9 +387,49 @@ function FormCombo({ platos, onDone }: { platos: Dish[]; onDone: () => void }) {
         <Input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="2.50" />
       </Field>
       <Button onClick={crear} disabled={pending}>
-        {pending ? "Armando…" : "Armar combo"}
+        {pending ? "Armando…" : `Armar combo${sel.size ? ` · ${sel.size}` : ""}`}
       </Button>
       {msg && <p className="text-center text-sm text-coral">{msg}</p>}
+    </div>
+  );
+}
+
+// Grupo de ítems seleccionables (chips) para armar el combo.
+function ComboPick({
+  title,
+  items,
+  sel,
+  onToggle,
+}: {
+  title: string;
+  items: Dish[];
+  sel: Set<string>;
+  onToggle: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-50">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((d) => {
+          const on = sel.has(d.id);
+          return (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => onToggle(d.id)}
+              className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
+                on ? "bg-ink text-white" : "bg-ink/5"
+              }`}
+            >
+              {d.name}
+              <span className={`ml-1 text-xs font-normal ${on ? "text-white/70" : "opacity-40"}`}>
+                {money(d.price)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
