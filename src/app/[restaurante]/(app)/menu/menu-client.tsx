@@ -49,6 +49,7 @@ function dateLabel(date: string, today: string): string {
 
 const inputCls =
   "rounded-xl border border-ink/15 px-2 py-1.5 text-sm outline-none focus:border-ink/40";
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 export default function MenuClient({
   isAdmin,
@@ -73,7 +74,7 @@ export default function MenuClient({
   const [bulkPending, startBulk] = useTransition();
 
   const addAll = (items: DishRow[]) => {
-    const payload = items.map((d) => ({ dishId: d.id, price: d.price || d.catalogPrice }));
+    const payload = items.map((d) => ({ dishId: d.id, price: d.catalogPrice }));
     if (payload.length === 0) return;
     startBulk(async () => {
       await agregarVariosAlMenu({ items: payload, date, shiftId });
@@ -123,8 +124,8 @@ export default function MenuClient({
       )}
 
       <p className="text-sm opacity-60">
-        Elige qué platos se venden {isAdmin ? "ese día en ese turno" : "hoy en este turno"} y
-        confirma su precio. La IA usa estos precios al registrar ventas.
+        Elige qué platos y combos se venden {isAdmin ? "ese día en ese turno" : "hoy en este turno"}.
+        El precio sale del catálogo. Los adicionales y bebidas aparecen siempre en la venta.
       </p>
 
       {isAdmin && enMenu.length > 0 && (
@@ -162,7 +163,6 @@ export default function MenuClient({
           [
             { label: "Platos", items: fuera.filter((d) => d.kind === "plato") },
             { label: "Combos", items: fuera.filter((d) => d.kind === "combo") },
-            { label: "Adicionales", items: fuera.filter((d) => d.kind === "extra") },
           ] as const
         ).map((g) =>
           g.items.length === 0 ? null : (
@@ -244,9 +244,7 @@ function Row({
   shiftId: string;
 }) {
   const router = useRouter();
-  const [price, setPrice] = useState(String(dish.price));
   const [pending, start] = useTransition();
-  const p = Number(price) || 0;
 
   const run = (fn: () => Promise<unknown>) =>
     start(async () => {
@@ -256,7 +254,7 @@ function Row({
 
   return (
     <div
-      className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
+      className={`flex items-center gap-2 rounded-2xl border px-3 py-2.5 ${
         dish.inMenu && !dish.available ? "border-ink/10 bg-ink/[0.03] opacity-60" : "border-ink/10"
       }`}
     >
@@ -270,22 +268,9 @@ function Row({
           </span>
         )}
       </span>
-      <span className="text-sm opacity-40">$</span>
-      <input
-        value={price}
-        onChange={(e) => setPrice(e.target.value)}
-        inputMode="decimal"
-        className={`w-20 ${inputCls}`}
-      />
+      <span className="text-sm font-semibold opacity-50">{money(dish.catalogPrice)}</span>
       {dish.inMenu ? (
         <>
-          <button
-            onClick={() => run(() => agregarAlMenu({ dishId: dish.id, price: p, date, shiftId }))}
-            disabled={pending}
-            className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white"
-          >
-            Guardar
-          </button>
           <button
             onClick={() =>
               run(() => toggleAgotado({ dishId: dish.id, available: !dish.available, date, shiftId }))
@@ -305,7 +290,7 @@ function Row({
         </>
       ) : (
         <button
-          onClick={() => run(() => agregarAlMenu({ dishId: dish.id, price: p, date, shiftId }))}
+          onClick={() => run(() => agregarAlMenu({ dishId: dish.id, price: dish.catalogPrice, date, shiftId }))}
           disabled={pending}
           className="rounded-full bg-ink px-4 py-1.5 text-xs font-semibold text-white"
         >

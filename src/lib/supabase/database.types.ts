@@ -768,6 +768,7 @@ export type Database = {
       ingredients: {
         Row: {
           active: boolean
+          consumo_visible: boolean
           consumption_unit: string | null
           conversion_factor: number | null
           costing_method: string
@@ -785,6 +786,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          consumo_visible?: boolean
           consumption_unit?: string | null
           conversion_factor?: number | null
           costing_method: string
@@ -802,6 +804,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          consumo_visible?: boolean
           consumption_unit?: string | null
           conversion_factor?: number | null
           costing_method?: string
@@ -1877,6 +1880,16 @@ export type Database = {
         }
         Returns: Json
       }
+      registrar_consumo: {
+        Args: {
+          p_date: string
+          p_items: Json
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
       registrar_consumo_interno: {
         Args: {
           p_date: string
@@ -1906,6 +1919,16 @@ export type Database = {
           p_date: string
           p_fuente: string
           p_note: string
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_merma_platos: {
+        Args: {
+          p_date: string
+          p_items: Json
           p_restaurant: string
           p_session: string
           p_user: string

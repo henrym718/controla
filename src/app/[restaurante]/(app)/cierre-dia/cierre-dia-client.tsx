@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, PageTitle } from "@/components/ui";
-import { registrarConteoAction } from "../admin/actions";
+import { registrarConteoAction, registrarMermaPlatosAction } from "../admin/actions";
 import { cerrarDiaAction } from "../../actions";
 import type { DaySummary } from "@/lib/reports";
 import type { ConteoEstado } from "../conteo/conteo-client";
@@ -22,11 +22,15 @@ interface Pool {
   name: string;
   poolCost: number;
 }
+interface Plato {
+  id: string;
+  name: string;
+}
 
 const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 const qtyStr = (n: number | null) => (n == null ? "—" : String(Number(n)));
 
-const STEPS = ["Turnos", "Conteo", "Merma", "Cerrar"];
+const STEPS = ["Turnos", "Conteo", "Merma", "Platos", "Cerrar"];
 const MERMA_PRESETS = [
   { label: "Nada", pct: 0 },
   { label: "Poco", pct: 10 },
@@ -41,6 +45,7 @@ export default function CierreDiaWizard({
   turnos,
   conteo,
   pools,
+  platos,
   summary,
 }: {
   slug: string;
@@ -49,6 +54,7 @@ export default function CierreDiaWizard({
   turnos: WizardTurno[];
   conteo: ConteoEstado;
   pools: Pool[];
+  platos: Plato[];
   summary: DaySummary;
 }) {
   const router = useRouter();
@@ -58,6 +64,7 @@ export default function CierreDiaWizard({
   const [conteoMsg, setConteoMsg] = useState<string | null>(null);
   const [merma, setMerma] = useState<Record<string, number>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
+  const [platosLost, setPlatosLost] = useState<Record<string, string>>({});
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
   const [pendingConteo, startConteo] = useTransition();
   const [pendingClose, startClose] = useTransition();
@@ -109,7 +116,18 @@ export default function CierreDiaWizard({
     setCloseMsg(null);
     const map: Record<string, number> = {};
     for (const p of pools) map[p.ingredientId] = merma[p.ingredientId] ?? 0;
+    const lost = platos
+      .map((p) => ({ dishId: p.id, qty: Number(platosLost[p.id]) || 0 }))
+      .filter((x) => x.qty > 0);
     startClose(async () => {
+      // Primero la merma de platos preparados (baja la proteína sobrante).
+      if (lost.length > 0) {
+        const rm = await registrarMermaPlatosAction(date, lost);
+        if (rm?.error) {
+          setCloseMsg(rm.error);
+          return;
+        }
+      }
       const r = await cerrarDiaAction(map);
       if (r?.error) setCloseMsg(r.error);
       else router.refresh();
@@ -372,8 +390,56 @@ export default function CierreDiaWizard({
         </div>
       )}
 
-      {/* ---------- PASO 4 · CERRAR ---------- */}
+      {/* ---------- PASO 4 · PLATOS PERDIDOS ---------- */}
       {step === 3 && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm opacity-70">
+            ¿Algún plato que <b>cocinaste</b> hoy y <b>no se vendió</b>? Pon cuántos sobraron: se
+            descuenta su proteína del inventario como pérdida. Lo vendido ya se descontó solo.
+          </p>
+          {platos.length === 0 ? (
+            <p className="rounded-2xl bg-ink/[0.03] p-4 text-sm opacity-60">
+              No hubo platos en el menú de hoy.
+            </p>
+          ) : (
+            <Card className="p-0">
+              {platos.map((p) => {
+                const v = platosLost[p.id] ?? "";
+                const active = Number(v) > 0;
+                return (
+                  <div
+                    key={p.id}
+                    className="flex items-center border-t border-ink/5 px-4 py-2.5 text-sm first:border-0"
+                  >
+                    <span className={`flex-1 font-medium ${active ? "text-coral" : ""}`}>
+                      {p.name}
+                    </span>
+                    <input
+                      inputMode="numeric"
+                      value={v}
+                      onChange={(e) =>
+                        setPlatosLost((m) => ({
+                          ...m,
+                          [p.id]: e.target.value.replace(/[^\d]/g, ""),
+                        }))
+                      }
+                      placeholder="0"
+                      className="w-20 rounded-xl border border-ink/15 px-2 py-1.5 text-right outline-none focus:border-ink/40"
+                    />
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+          <p className="text-[11px] opacity-50">
+            Solo baja insumos contables (presa, huevo) de la receta. El granel sobrante va en el paso
+            de merma.
+          </p>
+        </div>
+      )}
+
+      {/* ---------- PASO 5 · CERRAR ---------- */}
+      {step === 4 && (
         <div className="flex flex-col gap-3">
           <p className="text-sm opacity-70">
             Revisa el resumen y cierra el día. Esto calcula el costo real de cada plato y guarda el
