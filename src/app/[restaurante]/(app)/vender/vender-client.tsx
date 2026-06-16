@@ -28,6 +28,7 @@ export default function VenderClient({
   const router = useRouter();
   const [cart, setCart] = useState<Record<string, number>>({});
   const [openExtras, setOpenExtras] = useState(false);
+  const [search, setSearch] = useState("");
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
 
@@ -53,6 +54,17 @@ export default function VenderClient({
   const total = lines.reduce((s, [k, q]) => s + (byKey.get(k)?.price ?? 0) * q, 0);
   const extrasCount = extras.reduce((s, it) => s + (cart[it.key] ?? 0), 0);
 
+  // Buscador: filtra lo que YA está en pantalla (platos del menú + adicionales/
+  // productos) y lo muestra en una sola columna; vacío = vista estándar.
+  const q = search.trim().toLowerCase();
+  const searching = q.length > 0;
+  const matchPrincipales = searching
+    ? principales.filter((it) => it.name.toLowerCase().includes(q))
+    : principales;
+  const matchExtras = searching
+    ? extras.filter((it) => it.name.toLowerCase().includes(q))
+    : extras;
+
   const flashMsg = (ok: boolean, text: string) => {
     setFlash({ ok, text });
     setTimeout(() => setFlash(null), ok ? 1500 : 2800);
@@ -72,6 +84,7 @@ export default function VenderClient({
         flashMsg(true, `Venta registrada · ${money(r.total ?? total)}`);
         setCart({});
         setOpenExtras(false);
+        setSearch("");
       }
     });
   };
@@ -122,34 +135,70 @@ export default function VenderClient({
             <EmptyMenu slug={slug} />
           ) : (
             <>
-              {principales.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3">
-                  {principales.map((it) => (
-                    <BigCard
-                      key={it.key}
-                      item={it}
-                      qty={cart[it.key] ?? 0}
-                      onAdd={() => add(it.key)}
-                      onRemove={() => remove(it.key)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="rounded-3xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-60">
-                  No hay platos principales en el menú de hoy. Revisa los adicionales abajo.
-                </p>
-              )}
+              <SearchBar value={search} onChange={setSearch} onClear={() => setSearch("")} />
 
-              {extras.length > 0 && (
-                <ExtrasDrawer
-                  open={openExtras}
-                  onToggle={() => setOpenExtras((v) => !v)}
-                  extras={extras}
-                  cart={cart}
-                  count={extrasCount}
-                  onAdd={add}
-                  onRemove={remove}
-                />
+              {searching ? (
+                matchPrincipales.length + matchExtras.length === 0 ? (
+                  <p className="rounded-2xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-50">
+                    Nada con “{search.trim()}”.
+                  </p>
+                ) : (
+                  // Resultado: una sola columna. Plato principal grande; adicional
+                  // / producto más pequeño. Se agrega o quita ahí mismo.
+                  <div className="flex flex-col gap-2">
+                    {matchPrincipales.map((it) => (
+                      <ResultRow
+                        key={it.key}
+                        item={it}
+                        qty={cart[it.key] ?? 0}
+                        onAdd={() => add(it.key)}
+                        onRemove={() => remove(it.key)}
+                        big
+                      />
+                    ))}
+                    {matchExtras.map((it) => (
+                      <ResultRow
+                        key={it.key}
+                        item={it}
+                        qty={cart[it.key] ?? 0}
+                        onAdd={() => add(it.key)}
+                        onRemove={() => remove(it.key)}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : (
+                <>
+                  {principales.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      {principales.map((it) => (
+                        <BigCard
+                          key={it.key}
+                          item={it}
+                          qty={cart[it.key] ?? 0}
+                          onAdd={() => add(it.key)}
+                          onRemove={() => remove(it.key)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-3xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-60">
+                      No hay platos principales en el menú de hoy. Revisa los adicionales abajo.
+                    </p>
+                  )}
+
+                  {extras.length > 0 && (
+                    <ExtrasDrawer
+                      open={openExtras}
+                      onToggle={() => setOpenExtras((v) => !v)}
+                      extras={extras}
+                      cart={cart}
+                      count={extrasCount}
+                      onAdd={add}
+                      onRemove={remove}
+                    />
+                  )}
+                </>
               )}
             </>
           )}
@@ -239,6 +288,107 @@ function BigCard({
           +
         </button>
       </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- Buscador
+function SearchBar({
+  value,
+  onChange,
+  onClear,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="relative mb-4">
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Buscar plato o adicional…"
+        className="w-full rounded-2xl border border-ink/15 bg-white px-4 py-4 pr-12 text-base font-medium outline-none focus:border-ink/40"
+      />
+      {value && (
+        <button
+          onClick={onClear}
+          aria-label="Borrar búsqueda"
+          className="absolute right-2.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-ink/5 text-xl font-bold leading-none"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- Fila de resultado de búsqueda
+//  Una por línea. big = plato principal (grande); si no, adicional/producto (más pequeño).
+function ResultRow({
+  item,
+  qty,
+  onAdd,
+  onRemove,
+  big = false,
+}: {
+  item: SellItem;
+  qty: number;
+  onAdd: () => void;
+  onRemove: () => void;
+  big?: boolean;
+}) {
+  const active = qty > 0;
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-2xl border transition ${
+        active ? "border-ink bg-mint" : "border-ink/10 bg-white"
+      } ${big ? "px-4 py-4" : "px-3 py-2.5"}`}
+    >
+      <button onClick={onAdd} className="min-w-0 flex-1 text-left">
+        <p className={`truncate font-bold leading-tight ${big ? "text-lg" : "text-sm"}`}>
+          {item.name}
+          {item.isCombo && (
+            <span className="ml-1.5 inline-block rounded-full bg-white/70 px-2 py-0.5 align-middle text-[10px] font-semibold">
+              combo
+            </span>
+          )}
+        </p>
+        <p
+          className={`mt-0.5 font-semibold ${big ? "text-sm" : "text-xs"} ${
+            active ? "opacity-70" : "opacity-50"
+          }`}
+        >
+          {money(item.price)}
+        </p>
+      </button>
+      {active && (
+        <>
+          <button
+            onClick={onRemove}
+            aria-label="Quitar uno"
+            className={`flex items-center justify-center rounded-full bg-white font-bold leading-none ${
+              big ? "h-9 w-9 text-2xl" : "h-8 w-8 text-xl"
+            }`}
+          >
+            −
+          </button>
+          <span
+            className={`text-center font-bold tabular-nums ${big ? "min-w-6 text-xl" : "min-w-5"}`}
+          >
+            {qty}
+          </span>
+        </>
+      )}
+      <button
+        onClick={onAdd}
+        aria-label="Agregar uno"
+        className={`flex items-center justify-center rounded-full bg-ink font-bold leading-none text-white ${
+          big ? "h-9 w-9 text-2xl" : "h-8 w-8 text-xl"
+        }`}
+      >
+        +
+      </button>
     </div>
   );
 }
