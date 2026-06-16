@@ -505,6 +505,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "dish_components_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "dish_components_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -757,6 +764,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "granel_close_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "granel_close_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -768,6 +782,7 @@ export type Database = {
       ingredients: {
         Row: {
           active: boolean
+          consumo_visible: boolean
           consumption_unit: string | null
           conversion_factor: number | null
           costing_method: string
@@ -785,6 +800,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          consumo_visible?: boolean
           consumption_unit?: string | null
           conversion_factor?: number | null
           costing_method: string
@@ -802,6 +818,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          consumo_visible?: boolean
           consumption_unit?: string | null
           conversion_factor?: number | null
           costing_method?: string
@@ -874,6 +891,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "inventory_counts_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -959,6 +983,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "inventory_movements_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1069,6 +1100,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "production_batches_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1281,6 +1319,13 @@ export type Database = {
             columns: ["ingredient_id"]
             isOneToOne: false
             referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "sales_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
             referencedColumns: ["ingredient_id"]
           },
           {
@@ -1532,6 +1577,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "takeout_packaging_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "takeout_packaging_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -1652,6 +1704,13 @@ export type Database = {
             referencedColumns: ["ingredient_id"]
           },
           {
+            foreignKeyName: "production_batches_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
             foreignKeyName: "production_batches_restaurant_id_fkey"
             columns: ["restaurant_id"]
             isOneToOne: false
@@ -1663,6 +1722,24 @@ export type Database = {
       v_stock_contable: {
         Row: {
           ingredient_id: string | null
+          name: string | null
+          restaurant_id: string | null
+          stock: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredients_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_stock_total: {
+        Row: {
+          ingredient_id: string | null
+          kind: string | null
           name: string | null
           restaurant_id: string | null
           stock: number | null
@@ -1877,6 +1954,16 @@ export type Database = {
         }
         Returns: Json
       }
+      registrar_consumo: {
+        Args: {
+          p_date: string
+          p_items: Json
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
       registrar_consumo_interno: {
         Args: {
           p_date: string
@@ -1906,6 +1993,16 @@ export type Database = {
           p_date: string
           p_fuente: string
           p_note: string
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
+        Returns: Json
+      }
+      registrar_merma_insumos: {
+        Args: {
+          p_date: string
+          p_items: Json
           p_restaurant: string
           p_session: string
           p_user: string

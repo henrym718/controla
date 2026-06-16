@@ -36,6 +36,7 @@ export default async function AdminPage({
       items: [
         { href: `${base}/catalogo`, label: "Catálogo de platos", tone: "bg-lav" },
         { href: `${base}/inventario`, label: "Inventario", tone: "bg-sand" },
+        { href: `${base}/merma`, label: "Registrar daño / merma", tone: "bg-coral/15" },
       ],
     },
     {

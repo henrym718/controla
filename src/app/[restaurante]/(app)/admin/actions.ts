@@ -32,6 +32,7 @@ async function logAdmin(
   event: EventCode,
   description: string,
   metadata?: Record<string, unknown>,
+  opId?: string | null,
 ) {
   await logActivity(db, {
     restaurantId: session.restaurant_id,
@@ -42,6 +43,7 @@ async function logAdmin(
     event,
     description,
     metadata,
+    opId: opId ?? null,
   });
 }
 
@@ -470,24 +472,38 @@ export async function crearAdicional(input: {
 }
 
 // ---------------------------------------------------------------- Agregar producto al inventario (manual)
+//  Contable = se cuenta por unidades (lleva stock); granel = pool (sin stock,
+//  solo costo por unidad para valorar el consumo). consumoVisible decide si la
+//  cocinera puede registrarlo en su gasto del día.
+//  TODO insumo "para cocinar" lleva cantidad/stock. El switch decide el
+//  comportamiento: kind 'granel' = la cocinera registra lo que usa (pool);
+//  kind 'contable' = se descuenta solo al vender (receta). consumoVisible va en
+//  par con el kind. "De venta" = contable vendible (consumo off).
 export async function agregarProductoInventario(input: {
   name: string;
-  qty: number;
-  totalCost: number;
+  kind?: "contable" | "granel";
+  unit?: string | null;
+  qty?: number | null;
+  totalCost?: number | null;
   salePrice?: number | null;
+  consumoVisible?: boolean;
 }): Promise<ActionResult> {
   const { session, db } = await admin();
-  if (!input.name.trim() || !input.qty || input.qty <= 0) {
-    return { error: "Completa nombre y cantidad." };
-  }
-  const unit = input.totalCost / input.qty;
+  const name = input.name.trim();
+  if (!name) return { error: "Escribe el nombre." };
+  const kind = input.kind === "granel" ? "granel" : "contable";
+  const unit = input.unit ?? "unidad";
   const sellable = input.salePrice != null && input.salePrice > 0;
+  const qty = Number(input.qty) || 0;
+  if (qty <= 0) return { error: "Indica la cantidad que tienes." };
+  const unitCost = (Number(input.totalCost) || 0) / qty;
+  const consumoVisible = input.consumoVisible ?? kind === "granel";
 
   const { data: existing } = await db
     .from("ingredients")
     .select("id")
     .eq("restaurant_id", session.restaurant_id)
-    .ilike("name", input.name.trim())
+    .ilike("name", name)
     .limit(1);
 
   let ingId = existing?.[0]?.id;
@@ -496,14 +512,15 @@ export async function agregarProductoInventario(input: {
       .from("ingredients")
       .insert({
         restaurant_id: session.restaurant_id,
-        name: input.name.trim(),
-        kind: "contable",
-        costing_method: "conversion",
-        consumption_unit: "unidad",
-        conversion_factor: 1,
-        last_unit_cost: unit,
+        name,
+        kind,
+        costing_method: kind === "granel" ? "pool" : "conversion",
+        consumption_unit: unit,
+        conversion_factor: kind === "granel" ? null : 1,
+        last_unit_cost: unitCost,
         is_sellable: sellable,
         sale_price: sellable ? input.salePrice : null,
+        consumo_visible: consumoVisible,
       })
       .select("id")
       .single();
@@ -513,31 +530,58 @@ export async function agregarProductoInventario(input: {
     await db
       .from("ingredients")
       .update({
-        last_unit_cost: unit,
+        last_unit_cost: unitCost,
         active: true,
+        kind,
+        costing_method: kind === "granel" ? "pool" : "conversion",
+        consumption_unit: unit,
+        consumo_visible: consumoVisible,
         ...(sellable ? { is_sellable: true, sale_price: input.salePrice } : {}),
       })
       .eq("id", ingId);
   }
 
+  // Stock inicial: todos los insumos llevan cantidad (contable y granel).
   await db.from("inventory_movements").insert({
     restaurant_id: session.restaurant_id,
     ingredient_id: ingId!,
     shift_session_id: session.shift_session_id,
     business_date: businessDate(),
     type: "compra",
-    qty: input.qty,
-    unit_cost: unit,
+    qty,
+    unit_cost: unitCost,
   });
 
   await logAdmin(
     session,
     db,
     "producto_nuevo",
-    `Agregó ${input.qty} × ${input.name.trim()} al inventario (${money(input.totalCost)})`,
-    { name: input.name.trim(), qty: input.qty, total_cost: input.totalCost },
+    `Agregó ${qty} × ${name} al inventario`,
+    { name, kind, unit },
   );
 
+  revalidatePath(`/${session.slug}/inventario`);
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- Cambiar el comportamiento de un insumo (consumo ↔ venta)
+//  El switch del inventario. visible = "la cocinera registra" (granel/pool);
+//  !visible = "se descuenta al vender" (contable/receta). Cambia kind a la par.
+export async function toggleConsumoVisible(input: {
+  ingredientId: string;
+  visible: boolean;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  const { error } = await db
+    .from("ingredients")
+    .update({
+      consumo_visible: input.visible,
+      kind: input.visible ? "granel" : "contable",
+      costing_method: input.visible ? "pool" : "conversion",
+    })
+    .eq("id", input.ingredientId)
+    .eq("restaurant_id", session.restaurant_id);
+  if (error) return { error: error.message };
   revalidatePath(`/${session.slug}/inventario`);
   return { ok: true };
 }
@@ -572,6 +616,47 @@ export async function registrarConteoAction(
   );
   revalidatePath(`/${session.slug}/conteo`);
   return { faltante };
+}
+
+// ---------------------------------------------------------------- Merma por producto (dar de baja por daño) — SOLO ADMIN
+//  El admin da de baja productos del inventario que se DAÑARON / se perdieron
+//  (un tomate podrido, una cola rota, una presa que no sirve para mañana). Es
+//  selectivo por producto: baja como MERMA solo el insumo elegido (qty ×
+//  costo). NO toca la caja del turno (el producto ya estaba comprado); queda en
+//  los reportes de merma. Reversible vía op_id desde /reversar. Lo usa el módulo
+//  /merma y el paso "Dañados" del cierre del día.
+export async function registrarMermaInsumosAction(
+  date: string,
+  items: { ingredientId: string; qty: number; reason?: string | null }[],
+): Promise<{ error?: string; items?: number; total?: number }> {
+  const { session, db } = await admin();
+  const valid = items.filter((i) => i.ingredientId && i.qty > 0);
+  if (valid.length === 0) return { items: 0, total: 0 };
+  const { data, error } = await db.rpc("registrar_merma_insumos", {
+    p_restaurant: session.restaurant_id,
+    p_session: session.shift_session_id,
+    p_user: session.user_id,
+    p_date: date,
+    p_items: valid.map((i) => ({
+      ingredient_id: i.ingredientId,
+      qty: i.qty,
+      reason: i.reason ?? null,
+    })) as unknown as Json,
+  });
+  if (error) return { error: error.message };
+  const d = data as { op_id?: string; items?: number; total?: number } | null;
+  await logAdmin(
+    session,
+    db,
+    "merma",
+    `Dio de baja ${d?.items ?? 0} producto(s) dañado(s)/perdido(s) (${money(Number(d?.total ?? 0))})`,
+    { items: d?.items ?? 0, total: d?.total ?? 0 },
+    d?.op_id ?? null,
+  );
+  revalidatePath(`/${session.slug}/merma`);
+  revalidatePath(`/${session.slug}/inventario`);
+  revalidatePath(`/${session.slug}/cierre-dia`);
+  return { items: Number(d?.items ?? 0), total: Number(d?.total ?? 0) };
 }
 
 /** Valida el PIN de administradora con login_pin. Devuelve true si es admin. */

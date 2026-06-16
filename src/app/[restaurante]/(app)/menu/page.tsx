@@ -29,6 +29,7 @@ export default async function MenuPage({
       .select("id,name,price,is_combo,is_extra")
       .eq("restaurant_id", session.restaurant_id)
       .eq("active", true)
+      .eq("is_extra", false) // adicionales NO van al menú: siempre aparecen en la venta
       .order("name"),
     db
       .from("daily_menu")

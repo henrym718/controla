@@ -17,13 +17,13 @@ export default async function InventarioPage({
   const [{ data: ings }, { data: stock }] = await Promise.all([
     db
       .from("ingredients")
-      .select("id,name,last_unit_cost,is_sellable,sale_price")
+      .select("id,name,kind,consumption_unit,consumo_visible,last_unit_cost,is_sellable,sale_price")
       .eq("restaurant_id", session.restaurant_id)
-      .eq("kind", "contable")
       .eq("active", true)
       .order("name"),
+    // Stock de TODOS los insumos (contable + granel).
     db
-      .from("v_stock_contable")
+      .from("v_stock_total")
       .select("ingredient_id,stock")
       .eq("restaurant_id", session.restaurant_id),
   ]);
@@ -37,10 +37,13 @@ export default async function InventarioPage({
       products={(ings ?? []).map((i) => ({
         id: i.id,
         name: i.name,
+        kind: i.kind === "granel" ? ("granel" as const) : ("contable" as const),
+        unit: i.consumption_unit ?? null,
         cost: Number(i.last_unit_cost ?? 0),
         stock: stockMap.get(i.id) ?? 0,
         sellable: !!i.is_sellable,
         salePrice: i.sale_price != null ? Number(i.sale_price) : null,
+        consumoVisible: !!i.consumo_visible,
       }))}
     />
   );

@@ -10,16 +10,17 @@
 
   /* acentos saturados (figuras / detalles) */
   --color-coral: #ff4d3d;
+  --color-blue: #2f6bed;
   --color-purple: #7c5cfc;
   --color-teal: #00a887;
   --color-yellow: #ffb81f;
   --color-pink: #ff7ab6;
 
   /* pasteles (fondos / chips) */
-  --color-lav: #ece9ff;
-  --color-mint: #ddf5ee;
-  --color-peach: #ffe9e2;
-  --color-sand: #fbf1dc;
+  --color-lav: #e7e2ff;
+  --color-mint: #d4f1e6;
+  --color-peach: #ffe2d7;
+  --color-sand: #f8ead0;
 }
 
 * {

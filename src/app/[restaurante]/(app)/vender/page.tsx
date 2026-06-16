@@ -14,15 +14,25 @@ export default async function VenderPage({
   if (!session) redirect(`/${restaurante}`);
 
   const db = createAdminClient();
-  const [{ data: menu }, { data: productos }] = await Promise.all([
+  const [{ data: menu }, { data: adicionales }, { data: productos }] = await Promise.all([
+    // Platos y combos del MENÚ del día (qué se vende hoy en este turno).
     db
       .from("daily_menu")
-      .select("dish_id,price,sort_order,dishes(id,name,is_combo,is_extra,category,active)")
+      .select("dish_id,sort_order,dishes(id,name,price,is_combo,is_extra,active)")
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", businessDate())
       .eq("shift_id", session.shift_id)
       .eq("available", true)
       .order("sort_order"),
+    // TODOS los adicionales activos del catálogo (siempre disponibles en la venta).
+    db
+      .from("dishes")
+      .select("id,name,price")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("is_extra", true)
+      .eq("active", true)
+      .order("name"),
+    // TODOS los productos vendibles del inventario (colas, aguas) activos.
     db
       .from("ingredients")
       .select("id,name,sale_price")
@@ -35,40 +45,33 @@ export default async function VenderPage({
   type Dish = {
     id: string;
     name: string;
+    price: number;
     is_combo: boolean;
     is_extra: boolean;
-    category: string | null;
     active: boolean;
   };
-  type MenuRow = { dish_id: string; price: number; dishes: Dish | null };
+  type MenuRow = { dish_id: string; dishes: Dish | null };
 
-  // El menú trae el plato activo + su precio confirmado del día.
-  const rows = ((menu ?? []) as unknown as MenuRow[]).filter(
-    (m) => m.dishes && m.dishes.active,
-  );
-
-  // Platos y combos = tarjetas grandes (lo principal). Sopas antes que combos.
-  const principales: SellItem[] = rows
-    .filter((m) => !m.dishes!.is_extra)
+  // Platos y combos = tarjetas grandes (lo principal). Precio del catálogo (lo fija la admin).
+  const principales: SellItem[] = ((menu ?? []) as unknown as MenuRow[])
+    .filter((m) => m.dishes && m.dishes.active && !m.dishes.is_extra)
     .map((m) => ({
       key: `plato:${m.dishes!.id}`,
       kind: "plato",
       id: m.dishes!.id,
       name: m.dishes!.name,
-      price: Number(m.price),
+      price: Number(m.dishes!.price),
       isCombo: m.dishes!.is_combo,
     }));
 
-  // Adicionales del menú + productos vendibles del inventario (colas, aguas) → cajón.
-  const extrasMenu: SellItem[] = rows
-    .filter((m) => m.dishes!.is_extra)
-    .map((m) => ({
-      key: `plato:${m.dishes!.id}`,
-      kind: "plato",
-      id: m.dishes!.id,
-      name: m.dishes!.name,
-      price: Number(m.price),
-    }));
+  // Cajón (siempre presente, colapsado): adicionales del catálogo + productos vendibles.
+  const extrasAdicional: SellItem[] = (adicionales ?? []).map((d) => ({
+    key: `plato:${d.id}`,
+    kind: "plato",
+    id: d.id,
+    name: d.name,
+    price: Number(d.price),
+  }));
 
   const extrasProducto: SellItem[] = (productos ?? [])
     .filter((p) => Number(p.sale_price ?? 0) > 0)
@@ -84,7 +87,7 @@ export default async function VenderPage({
     <VenderClient
       slug={restaurante}
       principales={principales}
-      extras={[...extrasMenu, ...extrasProducto]}
+      extras={[...extrasAdicional, ...extrasProducto]}
     />
   );
 }

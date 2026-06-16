@@ -55,12 +55,6 @@ export default async function AppLayout({
       <nav className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-around bg-ink px-2 py-3 text-white"
            style={{ borderTopLeftRadius: 28, borderTopRightRadius: 28 }}>
         <Tab href={`/${restaurante}/hoy`} label="Hoy" />
-        <Link
-          href={`/${restaurante}/capturar`}
-          className="rounded-full bg-coral px-6 py-2 text-sm font-semibold"
-        >
-          Hablar
-        </Link>
         <Tab href={`/${restaurante}/cierre-turno`} label="Cierre" />
         {isAdmin && <Tab href={`/${restaurante}/admin`} label="Admin" />}
       </nav>
