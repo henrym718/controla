@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PageTitle } from "@/components/ui";
+import { Switch } from "@/components/ui/switch";
 import {
   agregarProductoInventario,
   editarProductoInventario,
@@ -216,7 +217,9 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
   const [qty, setQty] = useState("");
   const [total, setTotal] = useState("");
   const [unitCost, setUnitCost] = useState("");
-  const [consumo, setConsumo] = useState(false);
+  // Activado por defecto: la cocinera lo ve en consumo; el admin lo desactiva
+  // para lo que ya se descuenta por venta (ej. presa de pollo).
+  const [consumo, setConsumo] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -256,10 +259,7 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
         ).map(([v, label]) => (
           <button
             key={v}
-            onClick={() => {
-              setKind(v);
-              setConsumo(v === "granel");
-            }}
+            onClick={() => setKind(v)}
             className={`flex-1 rounded-full px-3 py-2 text-sm font-semibold ${
               kind === v ? "bg-ink text-white" : "bg-ink/5"
             }`}
@@ -319,15 +319,10 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
         </>
       )}
 
-      <label className="mt-1 flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={consumo}
-          onChange={(e) => setConsumo(e.target.checked)}
-          className="h-4 w-4"
-        />
-        La cocinera puede registrarlo en su consumo del día
-      </label>
+      <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
+        <span className="text-sm">La cocinera puede registrarlo en su consumo del día</span>
+        <Switch checked={consumo} onCheckedChange={(c) => setConsumo(c)} />
+      </div>
 
       <button
         onClick={submit}
