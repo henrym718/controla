@@ -265,11 +265,6 @@ const retiroInsumoSchema = z.object({
   qty: z.coerce.number().positive(),
   reason: z.string().min(1),
 });
-const mermaInsumoSchema = z.object({
-  ingredient_name: z.string().min(1),
-  qty: z.coerce.number().positive(),
-  reason: z.string().optional(),
-});
 const recetaSchema = z.object({
   dish_name: z.string().min(1),
   components: z
@@ -862,48 +857,6 @@ export const TOOLS: Record<string, Tool> = {
         { ingredient: ing.name, qty: a.qty, reason: a.reason },
       );
       return { message: `✅ Retiro: ${a.qty} × ${ing.name} — ${a.reason}.` };
-    },
-  },
-
-  registrar_merma_insumo: {
-    name: "registrar_merma_insumo",
-    mode: "write",
-    description: "Registra merma (desperdicio) de un insumo/producto contable.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        ingredient_name: { type: "STRING" },
-        qty: { type: "NUMBER", description: "Unidades que se botaron" },
-        reason: { type: "STRING" },
-      },
-      required: ["ingredient_name", "qty"],
-    },
-    validate: (raw) => mermaInsumoSchema.parse(raw),
-    preview: async (args) => {
-      const a = mermaInsumoSchema.parse(args);
-      return `Registrar merma: ${a.qty} × ${a.ingredient_name}${a.reason ? ` — ${a.reason}` : ""}. ¿Confirmo?`;
-    },
-    execute: async (args, ctx) => {
-      const a = mermaInsumoSchema.parse(args);
-      const ing = await resolveIngredient(ctx, a.ingredient_name);
-      if (!ing) throw new Error(`No conozco el insumo "${a.ingredient_name}".`);
-      await ctx.db.from("inventory_movements").insert({
-        restaurant_id: ctx.session.restaurant_id,
-        ingredient_id: ing.id,
-        shift_session_id: ctx.session.shift_session_id,
-        business_date: businessDate(),
-        type: "merma",
-        qty: -a.qty,
-        unit_cost: Number(ing.last_unit_cost ?? 0),
-        reason: a.reason ?? null,
-      });
-      await logEvent(
-        ctx,
-        "merma",
-        `Merma de ${a.qty} × ${ing.name}${a.reason ? ` — ${a.reason}` : ""}`,
-        { ingredient: ing.name, qty: a.qty, reason: a.reason ?? null },
-      );
-      return { message: `✅ Merma: ${a.qty} × ${ing.name}.` };
     },
   },
 

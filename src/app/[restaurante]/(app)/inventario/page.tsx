@@ -21,8 +21,9 @@ export default async function InventarioPage({
       .eq("restaurant_id", session.restaurant_id)
       .eq("active", true)
       .order("name"),
+    // Stock de TODOS los insumos (contable + granel).
     db
-      .from("v_stock_contable")
+      .from("v_stock_total")
       .select("ingredient_id,stock")
       .eq("restaurant_id", session.restaurant_id),
   ]);
@@ -39,8 +40,7 @@ export default async function InventarioPage({
         kind: i.kind === "granel" ? ("granel" as const) : ("contable" as const),
         unit: i.consumption_unit ?? null,
         cost: Number(i.last_unit_cost ?? 0),
-        // El granel no lleva stock por unidades.
-        stock: i.kind === "granel" ? null : (stockMap.get(i.id) ?? 0),
+        stock: stockMap.get(i.id) ?? 0,
         sellable: !!i.is_sellable,
         salePrice: i.sale_price != null ? Number(i.sale_price) : null,
         consumoVisible: !!i.consumo_visible,

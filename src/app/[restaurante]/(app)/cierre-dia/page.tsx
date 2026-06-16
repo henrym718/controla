@@ -28,7 +28,7 @@ export default async function CierreDiaPage({
   const db = createAdminClient();
   const date = businessDate();
 
-  const [cuadresRes, conteoRes, poolsRes, summary, dcRes, menuRes] = await Promise.all([
+  const [cuadresRes, conteoRes, poolsRes, summary, dcRes, ingsRes, stockRes] = await Promise.all([
     db.rpc("cuadres_dia", { p_restaurant: session.restaurant_id, p_date: date }),
     db.rpc("conteo_estado", { p_restaurant: session.restaurant_id, p_date: date }),
     db
@@ -43,12 +43,17 @@ export default async function CierreDiaPage({
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", date)
       .maybeSingle(),
-    // Platos del menú de hoy (cualquier turno) para declarar los que sobraron.
+    // Productos del inventario para dar de baja los que se dañaron / perdieron.
     db
-      .from("daily_menu")
-      .select("dishes(id,name,is_extra,active)")
+      .from("ingredients")
+      .select("id,name,kind,consumption_unit,last_unit_cost")
       .eq("restaurant_id", session.restaurant_id)
-      .eq("business_date", date),
+      .eq("active", true)
+      .order("name"),
+    db
+      .from("v_stock_total")
+      .select("ingredient_id,stock")
+      .eq("restaurant_id", session.restaurant_id),
   ]);
 
   const turnosRaw =
@@ -71,16 +76,17 @@ export default async function CierreDiaPage({
   }));
   const closed = dcRes.data?.status === "closed";
 
-  // Platos del día (sin repetir, no adicionales) para declarar los que sobraron.
-  type MenuDish = {
-    dishes: { id: string; name: string; is_extra: boolean; active: boolean } | null;
-  };
-  const platosMap = new Map<string, string>();
-  for (const m of (menuRes.data ?? []) as unknown as MenuDish[]) {
-    const d = m.dishes;
-    if (d && !d.is_extra && d.active) platosMap.set(d.id, d.name);
-  }
-  const platos = [...platosMap].map(([id, name]) => ({ id, name }));
+  // Productos del inventario (con su stock) para dar de baja los dañados / perdidos.
+  const stockMap = new Map(
+    (stockRes.data ?? []).map((s) => [s.ingredient_id, Number(s.stock ?? 0)]),
+  );
+  const productos = (ingsRes.data ?? []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    unit: i.consumption_unit ?? null,
+    cost: Number(i.last_unit_cost ?? 0),
+    stock: stockMap.get(i.id) ?? 0,
+  }));
 
   return (
     <CierreDiaWizard
@@ -90,7 +96,7 @@ export default async function CierreDiaPage({
       turnos={turnos}
       conteo={conteo}
       pools={pools}
-      platos={platos}
+      productos={productos}
       summary={summary}
     />
   );

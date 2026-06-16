@@ -1680,6 +1680,24 @@ export type Database = {
           },
         ]
       }
+      v_stock_total: {
+        Row: {
+          ingredient_id: string | null
+          kind: string | null
+          name: string | null
+          restaurant_id: string | null
+          stock: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredients_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       admin_create_user: {
@@ -1925,7 +1943,7 @@ export type Database = {
         }
         Returns: Json
       }
-      registrar_merma_platos: {
+      registrar_merma_insumos: {
         Args: {
           p_date: string
           p_items: Json

@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, PageTitle } from "@/components/ui";
-import { registrarConteoAction, registrarMermaPlatosAction } from "../admin/actions";
+import { registrarConteoAction, registrarMermaInsumosAction } from "../admin/actions";
 import { cerrarDiaAction } from "../../actions";
 import type { DaySummary } from "@/lib/reports";
 import type { ConteoEstado } from "../conteo/conteo-client";
@@ -22,15 +22,18 @@ interface Pool {
   name: string;
   poolCost: number;
 }
-interface Plato {
+interface Producto {
   id: string;
   name: string;
+  unit: string | null;
+  cost: number;
+  stock: number;
 }
 
 const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 const qtyStr = (n: number | null) => (n == null ? "—" : String(Number(n)));
 
-const STEPS = ["Turnos", "Conteo", "Merma", "Platos", "Cerrar"];
+const STEPS = ["Turnos", "Conteo", "Merma", "Dañados", "Cerrar"];
 const MERMA_PRESETS = [
   { label: "Nada", pct: 0 },
   { label: "Poco", pct: 10 },
@@ -45,7 +48,7 @@ export default function CierreDiaWizard({
   turnos,
   conteo,
   pools,
-  platos,
+  productos,
   summary,
 }: {
   slug: string;
@@ -54,7 +57,7 @@ export default function CierreDiaWizard({
   turnos: WizardTurno[];
   conteo: ConteoEstado;
   pools: Pool[];
-  platos: Plato[];
+  productos: Producto[];
   summary: DaySummary;
 }) {
   const router = useRouter();
@@ -64,7 +67,9 @@ export default function CierreDiaWizard({
   const [conteoMsg, setConteoMsg] = useState<string | null>(null);
   const [merma, setMerma] = useState<Record<string, number>>({});
   const [custom, setCustom] = useState<Record<string, string>>({});
-  const [platosLost, setPlatosLost] = useState<Record<string, string>>({});
+  const [mermaQty, setMermaQty] = useState<Record<string, string>>({});
+  const [mermaReason, setMermaReason] = useState("");
+  const [mermaQuery, setMermaQuery] = useState("");
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
   const [pendingConteo, startConteo] = useTransition();
   const [pendingClose, startClose] = useTransition();
@@ -76,6 +81,14 @@ export default function CierreDiaWizard({
     (s, p) => s + p.poolCost * ((merma[p.ingredientId] ?? 0) / 100),
     0,
   );
+  const danadosTotal = productos.reduce(
+    (s, p) => s + (Number(mermaQty[p.id]) || 0) * p.cost,
+    0,
+  );
+  const q = mermaQuery.trim().toLowerCase();
+  const productosFiltrados = q
+    ? productos.filter((p) => p.name.toLowerCase().includes(q))
+    : productos;
 
   const faltante = useMemo(() => {
     if (conteo.locked) {
@@ -116,13 +129,17 @@ export default function CierreDiaWizard({
     setCloseMsg(null);
     const map: Record<string, number> = {};
     for (const p of pools) map[p.ingredientId] = merma[p.ingredientId] ?? 0;
-    const lost = platos
-      .map((p) => ({ dishId: p.id, qty: Number(platosLost[p.id]) || 0 }))
+    const danados = productos
+      .map((p) => ({
+        ingredientId: p.id,
+        qty: Number(mermaQty[p.id]) || 0,
+        reason: mermaReason.trim() || null,
+      }))
       .filter((x) => x.qty > 0);
     startClose(async () => {
-      // Primero la merma de platos preparados (baja la proteína sobrante).
-      if (lost.length > 0) {
-        const rm = await registrarMermaPlatosAction(date, lost);
+      // Primero da de baja los productos dañados / perdidos (van a merma).
+      if (danados.length > 0) {
+        const rm = await registrarMermaInsumosAction(date, danados);
         if (rm?.error) {
           setCloseMsg(rm.error);
           return;
@@ -390,37 +407,55 @@ export default function CierreDiaWizard({
         </div>
       )}
 
-      {/* ---------- PASO 4 · PLATOS PERDIDOS ---------- */}
+      {/* ---------- PASO 4 · DAÑADOS / MERMA POR PRODUCTO ---------- */}
       {step === 3 && (
         <div className="flex flex-col gap-3">
           <p className="text-sm opacity-70">
-            ¿Algún plato que <b>cocinaste</b> hoy y <b>no se vendió</b>? Pon cuántos sobraron: se
-            descuenta su proteína del inventario como pérdida. Lo vendido ya se descontó solo.
+            ¿Algún producto se <b>dañó o se perdió</b> hoy y ya no sirve (un tomate podrido, una
+            presa que no aguanta mañana, una cola rota)? Márcalo: baja del inventario como{" "}
+            <b>merma</b>. Es por producto, no por plato. Lo vendido ya se descontó solo.
           </p>
-          {platos.length === 0 ? (
+          <input
+            value={mermaQuery}
+            onChange={(e) => setMermaQuery(e.target.value)}
+            placeholder="Buscar producto…"
+            className="w-full rounded-xl border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40"
+          />
+          {danadosTotal > 0.005 && (
+            <div className="rounded-2xl bg-coral p-3 text-center text-white">
+              <p className="text-xs text-white/70">Pérdida por daño</p>
+              <p className="text-xl font-bold">{money(danadosTotal)}</p>
+            </div>
+          )}
+          {productos.length === 0 ? (
             <p className="rounded-2xl bg-ink/[0.03] p-4 text-sm opacity-60">
-              No hubo platos en el menú de hoy.
+              No hay productos en el inventario.
             </p>
           ) : (
-            <Card className="p-0">
-              {platos.map((p) => {
-                const v = platosLost[p.id] ?? "";
+            <Card className="max-h-[22rem] overflow-y-auto p-0">
+              {productosFiltrados.map((p) => {
+                const v = mermaQty[p.id] ?? "";
                 const active = Number(v) > 0;
                 return (
                   <div
                     key={p.id}
                     className="flex items-center border-t border-ink/5 px-4 py-2.5 text-sm first:border-0"
                   >
-                    <span className={`flex-1 font-medium ${active ? "text-coral" : ""}`}>
-                      {p.name}
-                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`truncate font-medium ${active ? "text-coral" : ""}`}>
+                        {p.name}
+                      </p>
+                      <p className="text-[11px] opacity-50">
+                        stock {p.stock} · {money(p.cost)} c/u
+                      </p>
+                    </div>
                     <input
-                      inputMode="numeric"
+                      inputMode="decimal"
                       value={v}
                       onChange={(e) =>
-                        setPlatosLost((m) => ({
+                        setMermaQty((m) => ({
                           ...m,
-                          [p.id]: e.target.value.replace(/[^\d]/g, ""),
+                          [p.id]: e.target.value.replace(/[^\d.]/g, ""),
                         }))
                       }
                       placeholder="0"
@@ -431,10 +466,12 @@ export default function CierreDiaWizard({
               })}
             </Card>
           )}
-          <p className="text-[11px] opacity-50">
-            Solo baja insumos contables (presa, huevo) de la receta. El granel sobrante va en el paso
-            de merma.
-          </p>
+          <input
+            value={mermaReason}
+            onChange={(e) => setMermaReason(e.target.value)}
+            placeholder="Motivo (opcional): se dañó, se pudrió…"
+            className="w-full rounded-xl border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40"
+          />
         </div>
       )}
 
@@ -449,6 +486,11 @@ export default function CierreDiaWizard({
           {mermaPreview > 0 && (
             <p className="text-center text-xs opacity-60">
               Merma declarada: se perderán {money(mermaPreview)} de lo cocinado a granel.
+            </p>
+          )}
+          {danadosTotal > 0 && (
+            <p className="text-center text-xs opacity-60">
+              Productos dañados: se darán de baja {money(danadosTotal)} como merma.
             </p>
           )}
           <Button variant="accent" onClick={cerrarDia} disabled={pendingClose}>

@@ -70,12 +70,22 @@ export default async function HoyPage({
         </span>
       </Link>
 
-      <Link href={`/${restaurante}/consumo`} className="rounded-3xl bg-lav p-5">
-        <span className="block text-lg font-bold leading-tight">Registrar consumo</span>
-        <span className="mt-0.5 block text-sm opacity-60">
-          Lo que gastaste hoy para cocinar
-        </span>
-      </Link>
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          href={`/${restaurante}/consumo`}
+          className="flex min-h-24 flex-col justify-between rounded-3xl bg-lav p-4"
+        >
+          <span className="text-base font-bold leading-tight">Registrar consumo</span>
+          <span className="text-xs opacity-60">Lo que usaste para cocinar</span>
+        </Link>
+        <Link
+          href={`/${restaurante}/compras`}
+          className="flex min-h-24 flex-col justify-between rounded-3xl bg-sand p-4"
+        >
+          <span className="text-base font-bold leading-tight">Registrar compra</span>
+          <span className="text-xs opacity-60">Lo que compraste hoy</span>
+        </Link>
+      </div>
 
       <Link href={`/${restaurante}/gastos`} className="rounded-3xl bg-mint p-5">
         <span className="block text-lg font-bold leading-tight">Registrar gasto</span>

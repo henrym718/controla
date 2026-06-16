@@ -129,8 +129,8 @@ function ProductTable({
             <button onClick={() => onEdit(p.id)} className="flex min-w-0 flex-1 flex-col text-left">
               <span className="truncate font-medium">{p.name}</span>
               <span className="text-[11px] opacity-50">
-                {p.kind === "granel" ? "granel" : "se cuenta"}
-                {p.unit ? ` · ${p.unit}` : ""}
+                {p.unit ?? "unidad"}
+                {showConsumo ? ` · ${p.consumoVisible ? "la cocinera registra" : "baja al vender"}` : ""}
               </span>
             </button>
             {showSale && (
@@ -209,37 +209,33 @@ function AddModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// Insumo para cocinar: se cuenta (contable) o a granel (pool). Lleva unidad y costo.
+// Insumo para cocinar: cantidad + costo. El switch decide el comportamiento.
 function FormInsumo({ onDone }: { onDone: () => void }) {
-  const [kind, setKind] = useState<"contable" | "granel">("contable");
   const [name, setName] = useState("");
   const [unit, setUnit] = useState<string>("unidad");
   const [qty, setQty] = useState("");
   const [total, setTotal] = useState("");
-  const [unitCost, setUnitCost] = useState("");
-  // Activado por defecto: la cocinera lo ve en consumo; el admin lo desactiva
-  // para lo que ya se descuenta por venta (ej. presa de pollo).
+  // Activado por defecto: la cocinera lo registra (arroz, tomate, carne). El
+  // admin lo apaga para lo que se descuenta solo al vender (presa, huevo).
   const [consumo, setConsumo] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const q = Number(qty) || 0;
   const t = Number(total) || 0;
-  const unitFromLote = q > 0 ? t / q : 0;
+  const unitCost = q > 0 ? t / q : 0;
 
   const submit = () => {
     setMsg(null);
     if (!name.trim()) return setMsg("Escribe el nombre.");
-    if (kind === "contable" && q <= 0) return setMsg("Indica la cantidad inicial.");
-    if (kind === "granel" && !(Number(unitCost) > 0)) return setMsg("Indica el costo por unidad.");
+    if (q <= 0) return setMsg("Indica la cantidad que tienes.");
     start(async () => {
       const r = await agregarProductoInventario({
         name: name.trim(),
-        kind,
+        kind: consumo ? "granel" : "contable",
         unit,
-        qty: kind === "contable" ? q : null,
-        totalCost: kind === "contable" ? t : null,
-        unitCost: kind === "granel" ? Number(unitCost) : null,
+        qty: q,
+        totalCost: t,
         salePrice: null,
         consumoVisible: consumo,
       });
@@ -250,77 +246,49 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex gap-2">
-        {(
-          [
-            ["contable", "Se cuenta"],
-            ["granel", "A granel"],
-          ] as const
-        ).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => setKind(v)}
-            className={`flex-1 rounded-full px-3 py-2 text-sm font-semibold ${
-              kind === v ? "bg-ink text-white" : "bg-ink/5"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
       <p className="text-[11px] opacity-50">
-        {kind === "contable"
-          ? "Se cuenta en unidades (presa, huevo, unidad). Anti-robo por conteo."
-          : "No se cuenta por porción (arroz, sopa, aceite): su costo va al pool del día."}
+        Lo que usas para cocinar. Pon cuánto tienes ahora y cuánto te costó.
       </p>
 
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         className={inputCls}
-        placeholder={kind === "contable" ? "Presa de pollo, huevo…" : "Arroz, aceite, sopa…"}
+        placeholder="Arroz, presa de pollo, tomate…"
       />
 
       <label className="text-xs font-medium opacity-60">Unidad</label>
       <UnitPicker value={unit} onChange={setUnit} />
 
-      {kind === "contable" ? (
-        <>
-          <div className="flex gap-2">
-            <input
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              inputMode="decimal"
-              className={inputCls}
-              placeholder={`Cantidad (${unit})`}
-            />
-            <input
-              value={total}
-              onChange={(e) => setTotal(e.target.value)}
-              inputMode="decimal"
-              className={inputCls}
-              placeholder="Costo total $"
-            />
-          </div>
-          <p className="text-center text-sm">
-            Costo por {unit}: <span className="font-bold">${unitFromLote.toFixed(2)}</span>
-          </p>
-        </>
-      ) : (
-        <>
-          <label className="text-xs font-medium opacity-60">Costo por {unit} $</label>
-          <input
-            value={unitCost}
-            onChange={(e) => setUnitCost(e.target.value)}
-            inputMode="decimal"
-            className={inputCls}
-            placeholder="0.00"
-          />
-        </>
-      )}
+      <div className="flex gap-2">
+        <input
+          value={qty}
+          onChange={(e) => setQty(e.target.value)}
+          inputMode="decimal"
+          className={inputCls}
+          placeholder={`Cuánto tienes (${unit})`}
+        />
+        <input
+          value={total}
+          onChange={(e) => setTotal(e.target.value)}
+          inputMode="decimal"
+          className={inputCls}
+          placeholder="Costo total $"
+        />
+      </div>
+      <p className="text-center text-sm">
+        Costo por {unit}: <span className="font-bold">${unitCost.toFixed(2)}</span>
+      </p>
 
       <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
-        <span className="text-sm">La cocinera puede registrarlo en su consumo del día</span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium">¿La cocinera registra cuánto usa?</p>
+          <p className="text-[11px] opacity-50">
+            {consumo
+              ? "Sí: ella anota lo que gastó (arroz, tomate, carne)."
+              : "No: se descuenta solo al vender (presa, huevo)."}
+          </p>
+        </div>
         <Switch checked={consumo} onCheckedChange={(c) => setConsumo(c)} />
       </div>
 
@@ -361,7 +329,6 @@ function FormVenta({ onDone }: { onDone: () => void }) {
         unit,
         qty: q,
         totalCost: t,
-        unitCost: null,
         salePrice: sp,
         consumoVisible: false,
       });
