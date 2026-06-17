@@ -45,6 +45,11 @@ interface Comp {
   ingredientId: string;
   qty: number;
 }
+interface ComboExtra {
+  comboId: string;
+  ingredientId: string;
+  qty: number;
+}
 
 const selectCls =
   "w-full rounded-2xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-ink/40";
@@ -59,12 +64,14 @@ export default function CatalogoClient({
   parts,
   ingredients,
   components,
+  comboExtras,
 }: {
   slug: string;
   dishes: Dish[];
   parts: Part[];
   ingredients: Ingredient[];
   components: Comp[];
+  comboExtras: ComboExtra[];
 }) {
   const platos = dishes.filter((d) => !d.isCombo && !d.isExtra);
   const principales = platos.filter((d) => d.category !== "sopa");
@@ -88,6 +95,12 @@ export default function CatalogoClient({
     const arr = recipeByDish.get(c.dishId) ?? [];
     arr.push({ ingredientId: c.ingredientId, qty: c.qty });
     recipeByDish.set(c.dishId, arr);
+  }
+  const extrasByCombo = new Map<string, { ingredientId: string; qty: number }[]>();
+  for (const e of comboExtras) {
+    const arr = extrasByCombo.get(e.comboId) ?? [];
+    arr.push({ ingredientId: e.ingredientId, qty: e.qty });
+    extrasByCombo.set(e.comboId, arr);
   }
 
   const [recipeDish, setRecipeDish] = useState<Dish | null>(null);
@@ -230,6 +243,7 @@ export default function CatalogoClient({
           ingredients={ingredients}
           components={components}
           comboParts={parts.filter((p) => p.comboId === editDish.id)}
+          comboExtras={extrasByCombo.get(editDish.id) ?? []}
           onClose={() => setEditDish(null)}
         />
       )}
@@ -447,6 +461,7 @@ function FormCombo({
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
+  const [extras, setExtras] = useState<{ ingredientId: string; qty: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -480,6 +495,7 @@ function FormCombo({
         parts,
         name: name.trim() || undefined,
         price: Number(price) || null,
+        extras: extras.filter((e) => e.qty > 0),
       });
       if (r.error) setMsg(r.error);
       else onDone();
@@ -498,6 +514,17 @@ function FormCombo({
       <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
 
       <ComboRecipePreview selectedIds={sel} ingredients={ingredients} components={components} />
+
+      <div className="flex flex-col gap-2 rounded-2xl bg-ink/[0.02] p-3">
+        <p className="text-sm font-semibold">
+          Extra propio del combo <span className="font-normal opacity-50">· opcional</span>
+        </p>
+        <p className="-mt-1 text-xs opacity-50">
+          Un insumo del inventario que se descuenta SOLO en este combo (ej. una cola, un vaso),
+          además de lo que traen los platos.
+        </p>
+        <RecipeEditor ingredients={ingredients} rows={extras} setRows={setExtras} />
+      </div>
 
       <Field label="Nombre del combo (opcional)">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Combo del día" />
@@ -582,7 +609,7 @@ function ComboRecipePreview({
   return (
     <div className="flex flex-col gap-1.5 rounded-2xl bg-ink/[0.02] p-3">
       <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
-        Insumos que descontará al vender
+        Insumos heredados de los platos
       </p>
       {rows.length === 0 ? (
         <p className="text-sm opacity-60">
@@ -687,6 +714,7 @@ function EditDishModal({
   ingredients,
   components,
   comboParts,
+  comboExtras,
   onClose,
 }: {
   dish: Dish;
@@ -696,6 +724,7 @@ function EditDishModal({
   ingredients: Ingredient[];
   components: Comp[];
   comboParts: Part[];
+  comboExtras: { ingredientId: string; qty: number }[];
   onClose: () => void;
 }) {
   const isPlato = !dish.isCombo && !dish.isExtra;
@@ -707,6 +736,7 @@ function EditDishModal({
     dish.category === "sopa" ? "sopa" : "principal",
   );
   const [sel, setSel] = useState<Set<string>>(() => new Set(comboParts.map((p) => p.partId)));
+  const [extras, setExtras] = useState<{ ingredientId: string; qty: number }[]>(comboExtras);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -736,6 +766,7 @@ function EditDishModal({
           name: name.trim(),
           price: Number(price),
           active,
+          extras: extras.filter((e) => e.qty > 0),
         });
         if (r.error) setMsg(r.error);
         else onClose();
@@ -777,6 +808,15 @@ function EditDishModal({
               <ComboPick title="Platos principales" items={principales} sel={sel} onToggle={toggle} />
               <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
               <ComboRecipePreview selectedIds={sel} ingredients={ingredients} components={components} />
+              <div className="flex flex-col gap-2 border-t border-ink/10 pt-3">
+                <p className="text-sm font-semibold">
+                  Extra propio del combo <span className="font-normal opacity-50">· opcional</span>
+                </p>
+                <p className="-mt-1 text-xs opacity-50">
+                  Insumo del inventario que se descuenta SOLO en este combo (ej. una cola, un vaso).
+                </p>
+                <RecipeEditor ingredients={ingredients} rows={extras} setRows={setExtras} />
+              </div>
               <p className="text-xs opacity-60">
                 Al guardar, la receta y el costo del combo se recalculan según los ítems marcados.
               </p>

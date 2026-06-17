@@ -427,6 +427,9 @@ export async function armarCombo(input: {
   parts: { dishId: string; role: "sopa" | "segundo" | "adicional" }[];
   name?: string;
   price?: number | null;
+  // Insumos extra propios del combo (cola, vaso…): se descuentan SOLO en el combo,
+  // además de lo que heredan sus platos. Opcional.
+  extras?: { ingredientId: string; qty: number }[];
 }): Promise<ActionResult> {
   const { session, db } = await admin();
   const parts = input.parts.filter((p) => p.dishId);
@@ -440,13 +443,49 @@ export async function armarCombo(input: {
     p_user: session.user_id,
   });
   if (error) return { error: error.message };
-  const d = data as { name?: string } | null;
+  const d = data as { combo_dish_id?: string; name?: string } | null;
+
+  // Extras propios del combo (reemplazo completo).
+  const comboId = d?.combo_dish_id;
+  if (comboId) {
+    const err = await setComboExtras(db, session.restaurant_id, comboId, input.extras);
+    if (err) return { error: err };
+  }
+
   await logAdmin(session, db, "plato_config", `Armó el combo ${d?.name ?? "nuevo"}`, {
     combo: d?.name,
     parts: parts.length,
   });
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
+}
+
+// Reemplaza los insumos extra propios de un combo (borra + inserta). Devuelve un
+// mensaje de error o null si todo salió bien. Lo usan armarCombo y actualizarCombo.
+async function setComboExtras(
+  db: Awaited<ReturnType<typeof admin>>["db"],
+  restaurantId: string,
+  comboId: string,
+  extras?: { ingredientId: string; qty: number }[],
+): Promise<string | null> {
+  await db
+    .from("combo_extras")
+    .delete()
+    .eq("restaurant_id", restaurantId)
+    .eq("combo_dish_id", comboId);
+  const rows = (extras ?? [])
+    .filter((e) => e.ingredientId && e.qty > 0)
+    .map((e) => ({
+      restaurant_id: restaurantId,
+      combo_dish_id: comboId,
+      ingredient_id: e.ingredientId,
+      qty: e.qty,
+    }));
+  if (rows.length) {
+    const { error } = await db.from("combo_extras").insert(rows);
+    if (error) return error.message;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- Editar combo (nombre, precio, activo y partes)
@@ -461,6 +500,7 @@ export async function actualizarCombo(
     name: string;
     price: number;
     active: boolean;
+    extras?: { ingredientId: string; qty: number }[];
   },
 ): Promise<ActionResult> {
   const { session, db } = await admin();
@@ -524,6 +564,10 @@ export async function actualizarCombo(
     const { error: re } = await db.from("dish_components").insert(recipeRows);
     if (re) return { error: re.message };
   }
+
+  // (4) insumos extra propios del combo (cola, vaso…): reemplazo completo.
+  const exErr = await setComboExtras(db, session.restaurant_id, id, input.extras);
+  if (exErr) return { error: exErr };
 
   await logAdmin(
     session,
