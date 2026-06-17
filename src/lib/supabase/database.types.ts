@@ -363,6 +363,69 @@ export type Database = {
           },
         ]
       }
+      combo_extras: {
+        Row: {
+          combo_dish_id: string
+          created_at: string
+          id: string
+          ingredient_id: string
+          qty: number
+          restaurant_id: string
+        }
+        Insert: {
+          combo_dish_id: string
+          created_at?: string
+          id?: string
+          ingredient_id: string
+          qty?: number
+          restaurant_id: string
+        }
+        Update: {
+          combo_dish_id?: string
+          created_at?: string
+          id?: string
+          ingredient_id?: string
+          qty?: number
+          restaurant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "combo_extras_combo_dish_id_fkey"
+            columns: ["combo_dish_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "combo_extras_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "combo_extras_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_contable"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "combo_extras_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "v_stock_total"
+            referencedColumns: ["ingredient_id"]
+          },
+          {
+            foreignKeyName: "combo_extras_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       combo_parts: {
         Row: {
           combo_dish_id: string

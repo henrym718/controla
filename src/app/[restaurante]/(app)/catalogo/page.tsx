@@ -19,6 +19,7 @@ export default async function CatalogoPage({
     { data: parts },
     { data: ingredients },
     { data: components },
+    { data: comboExtras },
     { data: stock },
   ] = await Promise.all([
     db
@@ -39,6 +40,10 @@ export default async function CatalogoPage({
     db
       .from("dish_components")
       .select("dish_id,ingredient_id,qty")
+      .eq("restaurant_id", session.restaurant_id),
+    db
+      .from("combo_extras")
+      .select("combo_dish_id,ingredient_id,qty")
       .eq("restaurant_id", session.restaurant_id),
     db
       .from("v_stock_contable")
@@ -76,6 +81,11 @@ export default async function CatalogoPage({
       }))}
       components={(components ?? []).map((c) => ({
         dishId: c.dish_id,
+        ingredientId: c.ingredient_id,
+        qty: Number(c.qty),
+      }))}
+      comboExtras={(comboExtras ?? []).map((c) => ({
+        comboId: c.combo_dish_id,
         ingredientId: c.ingredient_id,
         qty: Number(c.qty),
       }))}
