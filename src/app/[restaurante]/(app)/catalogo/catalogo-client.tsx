@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition, type ReactNode } from "react";
+import {
+  useState,
+  useTransition,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { Button, Card, Field, Input, PageTitle } from "@/components/ui";
 import {
   crearPlato,
@@ -86,7 +92,20 @@ export default function CatalogoClient({
   const [recipeDish, setRecipeDish] = useState<Dish | null>(null);
   const [editDish, setEditDish] = useState<Dish | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [query, setQuery] = useState("");
   const [, start] = useTransition();
+
+  // Buscador rápido del catálogo: filtra por nombre en vivo. Las secciones
+  // vacías se ocultan solas (Section devuelve null cuando count === 0).
+  const q = query.trim().toLowerCase();
+  const match = (d: Dish) => !q || d.name.toLowerCase().includes(q);
+  const fPrincipales = principales.filter(match);
+  const fSopas = sopas.filter(match);
+  const fCombos = combos.filter(match);
+  const fAdicionales = adicionales.filter(match);
+  const noResults =
+    q !== "" &&
+    fPrincipales.length + fSopas.length + fCombos.length + fAdicionales.length === 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -100,14 +119,28 @@ export default function CatalogoClient({
         </button>
       </div>
 
+      {dishes.length > 0 && (
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar plato, combo o adicional…"
+        />
+      )}
+
       {dishes.length === 0 && (
         <p className="rounded-2xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-60">
           Aún no hay nada. Toca «+ Agregar» para crear tu primer plato.
         </p>
       )}
 
-      <Section title="Platos principales" count={principales.length}>
-        {principales.map((d) => (
+      {noResults && (
+        <p className="rounded-2xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-60">
+          Sin resultados para «{query.trim()}».
+        </p>
+      )}
+
+      <Section title="Platos principales" count={fPrincipales.length}>
+        {fPrincipales.map((d) => (
           <DishCard
             key={d.id}
             dish={d}
@@ -119,8 +152,8 @@ export default function CatalogoClient({
         ))}
       </Section>
 
-      <Section title="Sopas" count={sopas.length}>
-        {sopas.map((d) => (
+      <Section title="Sopas" count={fSopas.length}>
+        {fSopas.map((d) => (
           <DishCard
             key={d.id}
             dish={d}
@@ -132,9 +165,9 @@ export default function CatalogoClient({
         ))}
       </Section>
 
-      {combos.length > 0 && (
-        <Section title="Combos" count={combos.length}>
-          {combos.map((d) => {
+      {fCombos.length > 0 && (
+        <Section title="Combos" count={fCombos.length}>
+          {fCombos.map((d) => {
             const pr = partsByCombo.get(d.id);
             const sub = pr
               ? pr
@@ -150,9 +183,9 @@ export default function CatalogoClient({
         </Section>
       )}
 
-      {adicionales.length > 0 && (
-        <Section title="Adicionales" count={adicionales.length}>
-          {adicionales.map((d) => (
+      {fAdicionales.length > 0 && (
+        <Section title="Adicionales" count={fAdicionales.length}>
+          {fAdicionales.map((d) => (
             <DishCard
               key={d.id}
               dish={d}
@@ -170,7 +203,12 @@ export default function CatalogoClient({
           platos={platos}
           adicionales={adicionales}
           contables={contables}
+          ingredients={ingredients}
           onClose={() => setShowAdd(false)}
+          onPick={(d) => {
+            setShowAdd(false);
+            setEditDish(d);
+          }}
         />
       )}
       {recipeDish && (
@@ -195,12 +233,16 @@ function AddCatalogModal({
   platos,
   adicionales,
   contables,
+  ingredients,
   onClose,
+  onPick,
 }: {
   platos: Dish[];
   adicionales: Dish[];
   contables: Ingredient[];
+  ingredients: Ingredient[];
   onClose: () => void;
+  onPick: (dish: Dish) => void;
 }) {
   const [tab, setTab] = useState<AddTab>("plato");
   const TABS: { id: AddTab; label: string }[] = [
@@ -233,7 +275,9 @@ function AddCatalogModal({
           ))}
         </div>
 
-        {tab === "plato" && <FormPlato onDone={onClose} />}
+        {tab === "plato" && (
+          <FormPlato platos={platos} ingredients={ingredients} onPick={onPick} onDone={onClose} />
+        )}
         {tab === "combo" && (
           <FormCombo platos={platos} adicionales={adicionales} onDone={onClose} />
         )}
@@ -276,19 +320,40 @@ function CategoryPicker({
 }
 
 // --------------------------------------------------------------------------- Form: Plato
-function FormPlato({ onDone }: { onDone: () => void }) {
+function FormPlato({
+  platos,
+  ingredients,
+  onPick,
+  onDone,
+}: {
+  platos: Dish[];
+  ingredients: Ingredient[];
+  onPick: (dish: Dish) => void;
+  onDone: () => void;
+}) {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState<"principal" | "sopa">("principal");
+  const [rows, setRows] = useState<{ ingredientId: string; qty: number }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  // Coincidencias en vivo para no crear un plato que ya existe. Si no hay
+  // ninguna, el dropdown simplemente no se renderiza (sin mensaje "no existe").
+  const nq = name.trim().toLowerCase();
+  const dupes = nq ? platos.filter((d) => d.name.toLowerCase().includes(nq)).slice(0, 5) : [];
 
   const crear = () => {
     setMsg(null);
     const p = Number(price);
     if (!name.trim() || !p) return setMsg("Completa nombre y precio.");
     start(async () => {
-      const r = await crearPlato({ name: name.trim(), price: p, category });
+      const r = await crearPlato({
+        name: name.trim(),
+        price: p,
+        category,
+        components: rows.filter((x) => x.qty > 0),
+      });
       if (r.error) setMsg(r.error);
       else onDone();
     });
@@ -296,14 +361,43 @@ function FormPlato({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm opacity-60">Un plato individual (luego le pones su receta).</p>
+      <p className="text-sm opacity-60">Un plato individual. Si quieres, agrégale su receta aquí mismo.</p>
       <CategoryPicker value={category} onChange={setCategory} />
       <Field label="Nombre">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seco de pollo, Sopa de bola…" />
       </Field>
+      {dupes.length > 0 && (
+        <div className="-mt-1.5 flex flex-col overflow-hidden rounded-2xl border border-ink/10">
+          <p className="bg-sand/40 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide opacity-60">
+            Ya tienes algo parecido
+          </p>
+          {dupes.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => onPick(d)}
+              className="flex items-center justify-between gap-2 border-b border-ink/5 px-3 py-2 text-left last:border-0 hover:bg-ink/[0.03]"
+            >
+              <span className="min-w-0 truncate text-sm font-medium">{d.name}</span>
+              <span className="shrink-0 text-xs opacity-50">{money(d.price)} · editar</span>
+            </button>
+          ))}
+        </div>
+      )}
       <Field label="Precio individual">
         <Input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="0.00" />
       </Field>
+
+      <div className="flex flex-col gap-2 rounded-2xl bg-ink/[0.02] p-3">
+        <p className="text-sm font-semibold">
+          Receta <span className="font-normal opacity-50">· opcional</span>
+        </p>
+        <p className="-mt-1 text-xs opacity-50">
+          Los insumos que consume. Puedes dejarlo vacío y agregarlo después.
+        </p>
+        <RecipeEditor ingredients={ingredients} rows={rows} setRows={setRows} />
+      </div>
+
       <Button onClick={crear} disabled={pending}>
         {pending ? "Guardando…" : "Crear plato"}
       </Button>
@@ -568,22 +662,19 @@ function EditDishModal({ dish, slug, onClose }: { dish: Dish; slug: string; onCl
   );
 }
 
-// --------------------------------------------------------------------------- Receta (buscador)
-function RecipeModal({
-  dish,
+// --------------------------------------------------------------------------- Editor de receta (reusable)
+//  Lista de insumos con cantidad/quitar + buscador con autocompletado + costo
+//  directo. Lo usa tanto el modal de Receta como el formulario de crear plato.
+function RecipeEditor({
   ingredients,
-  current,
-  onClose,
+  rows,
+  setRows,
 }: {
-  dish: Dish;
   ingredients: Ingredient[];
-  current: { ingredientId: string; qty: number }[];
-  onClose: () => void;
+  rows: { ingredientId: string; qty: number }[];
+  setRows: Dispatch<SetStateAction<{ ingredientId: string; qty: number }[]>>;
 }) {
-  const [rows, setRows] = useState<{ ingredientId: string; qty: number }[]>(current);
   const [search, setSearch] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [pending, start] = useTransition();
 
   const byId = new Map(ingredients.map((i) => [i.id, i]));
   const used = new Set(rows.map((r) => r.ingredientId));
@@ -606,6 +697,104 @@ function RecipeModal({
   const setQty = (id: string, q: number) =>
     setRows((r) => r.map((x) => (x.ingredientId === id ? { ...x, qty: q } : x)));
 
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.length === 0 && (
+        <p className="rounded-2xl bg-ink/[0.03] px-3 py-4 text-center text-sm opacity-50">
+          Aún no lleva nada. Búscalo abajo y agrégalo.
+        </p>
+      )}
+      {rows.map((r) => {
+        const ing = byId.get(r.ingredientId);
+        const granel = ing?.kind === "granel";
+        return (
+          <div
+            key={r.ingredientId}
+            className="flex items-center gap-2 rounded-2xl border border-ink/10 px-3 py-2"
+          >
+            <span className="min-w-0 flex-1 text-sm font-medium">
+              <span className="truncate">{ing?.name ?? "—"}</span>
+              <span
+                className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                  granel ? "bg-sand" : "bg-mint"
+                }`}
+              >
+                {granel ? "granel" : "directo"}
+              </span>
+              {ing && !granel && (
+                <span className="ml-1 text-[11px] opacity-50">
+                  {money(ing.cost)}
+                  {ing.stock != null ? ` · ${ing.stock} u` : ""}
+                </span>
+              )}
+            </span>
+            <input
+              inputMode="decimal"
+              value={String(r.qty)}
+              onChange={(e) => setQty(r.ingredientId, Number(e.target.value) || 0)}
+              className="w-16 rounded-xl border border-ink/15 px-2 py-1 text-right text-sm outline-none focus:border-ink/40"
+            />
+            <button
+              onClick={() => removeRow(r.ingredientId)}
+              className="rounded-full bg-coral/10 px-3 py-1 text-xs font-semibold text-coral"
+            >
+              Quitar
+            </button>
+          </div>
+        );
+      })}
+
+      <div className="mt-1">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar insumo del inventario…"
+          className="w-full rounded-2xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none focus:border-ink/40"
+        />
+        {matches.length > 0 && (
+          <div className="mt-1 flex flex-col overflow-hidden rounded-2xl border border-ink/10">
+            {matches.map((i) => (
+              <button
+                key={i.id}
+                onClick={() => add(i.id)}
+                className="flex items-center justify-between gap-2 border-b border-ink/5 px-3 py-2 text-left text-sm last:border-0 hover:bg-ink/[0.03]"
+              >
+                <span className="min-w-0 truncate font-medium">{i.name}</span>
+                <span className="shrink-0 text-xs opacity-50">
+                  {i.kind === "granel"
+                    ? "granel"
+                    : `${money(i.cost)}${i.stock != null ? ` · ${i.stock} u` : ""}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <p className="mt-1 text-center text-xs opacity-60">
+        Costo directo de la receta: <span className="font-bold">{money(directo)}</span>
+        <span className="opacity-50"> (+ lo de granel se reparte al cierre)</span>
+      </p>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- Receta (modal)
+function RecipeModal({
+  dish,
+  ingredients,
+  current,
+  onClose,
+}: {
+  dish: Dish;
+  ingredients: Ingredient[];
+  current: { ingredientId: string; qty: number }[];
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<{ ingredientId: string; qty: number }[]>(current);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
   const save = () => {
     setMsg(null);
     start(async () => {
@@ -627,84 +816,7 @@ function RecipeModal({
           (arroz, sopa) marca que participa de ese pool.
         </p>
 
-        <div className="flex flex-col gap-2">
-          {rows.length === 0 && (
-            <p className="rounded-2xl bg-ink/[0.03] px-3 py-4 text-center text-sm opacity-50">
-              Aún no lleva nada. Búscalo abajo y agrégalo.
-            </p>
-          )}
-          {rows.map((r) => {
-            const ing = byId.get(r.ingredientId);
-            const granel = ing?.kind === "granel";
-            return (
-              <div
-                key={r.ingredientId}
-                className="flex items-center gap-2 rounded-2xl border border-ink/10 px-3 py-2"
-              >
-                <span className="min-w-0 flex-1 text-sm font-medium">
-                  <span className="truncate">{ing?.name ?? "—"}</span>
-                  <span
-                    className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      granel ? "bg-sand" : "bg-mint"
-                    }`}
-                  >
-                    {granel ? "granel" : "directo"}
-                  </span>
-                  {ing && !granel && (
-                    <span className="ml-1 text-[11px] opacity-50">
-                      {money(ing.cost)}
-                      {ing.stock != null ? ` · ${ing.stock} u` : ""}
-                    </span>
-                  )}
-                </span>
-                <input
-                  inputMode="decimal"
-                  value={String(r.qty)}
-                  onChange={(e) => setQty(r.ingredientId, Number(e.target.value) || 0)}
-                  className="w-16 rounded-xl border border-ink/15 px-2 py-1 text-right text-sm outline-none focus:border-ink/40"
-                />
-                <button
-                  onClick={() => removeRow(r.ingredientId)}
-                  className="rounded-full bg-coral/10 px-3 py-1 text-xs font-semibold text-coral"
-                >
-                  Quitar
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-3">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar insumo del inventario…"
-            className="w-full rounded-2xl border border-ink/15 px-3 py-2.5 text-sm outline-none focus:border-ink/40"
-          />
-          {matches.length > 0 && (
-            <div className="mt-1 flex flex-col overflow-hidden rounded-2xl border border-ink/10">
-              {matches.map((i) => (
-                <button
-                  key={i.id}
-                  onClick={() => add(i.id)}
-                  className="flex items-center justify-between gap-2 border-b border-ink/5 px-3 py-2 text-left text-sm last:border-0 hover:bg-ink/[0.03]"
-                >
-                  <span className="min-w-0 truncate font-medium">{i.name}</span>
-                  <span className="shrink-0 text-xs opacity-50">
-                    {i.kind === "granel"
-                      ? "granel"
-                      : `${money(i.cost)}${i.stock != null ? ` · ${i.stock} u` : ""}`}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <p className="mt-3 text-center text-xs opacity-60">
-          Costo directo de la receta: <span className="font-bold">{money(directo)}</span>
-          <span className="opacity-50"> (+ lo de granel se reparte al cierre)</span>
-        </p>
+        <RecipeEditor ingredients={ingredients} rows={rows} setRows={setRows} />
 
         <div className="mt-3 flex gap-2">
           <button
@@ -756,14 +868,14 @@ function DishCard({
     <Card className={dish.active ? "" : "opacity-50"}>
       <div className="flex items-center justify-between gap-2">
         <button onClick={onEdit} className="min-w-0 flex-1 text-left">
-          <p className="truncate font-semibold">
+          <p className="text-lg font-bold leading-snug">
             {dish.name}
-            <span className="ml-1 text-xs font-normal opacity-40">· editar</span>
+            <span className="ml-1.5 align-middle text-xs font-normal opacity-40">· editar</span>
           </p>
           {subtitle ? (
-            <p className="truncate text-xs opacity-60">{subtitle}</p>
+            <p className="mt-0.5 text-sm opacity-60">{subtitle}</p>
           ) : (
-            <p className="text-xs opacity-60">{money(dish.price)}</p>
+            <p className="mt-0.5 text-lg font-semibold">{money(dish.price)}</p>
           )}
         </button>
         <div className="flex shrink-0 items-center gap-2">

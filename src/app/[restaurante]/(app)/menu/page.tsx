@@ -1,15 +1,38 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Pencil } from "lucide-react";
 import { getSession } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDate } from "@/lib/shifts";
-import MenuClient from "./menu-client";
+import { allDayShiftId } from "@/lib/menu";
+import { parseLocal } from "@/lib/range";
+import { PageTitle } from "@/components/ui";
+
+const MESES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function shiftYmd(date: string, delta: number): string {
+  const d = parseLocal(date);
+  d.setDate(d.getDate() + delta);
+  return ymd(d);
+}
+function dateLabel(date: string, today: string): string {
+  if (date === today) return "Hoy";
+  const d = parseLocal(date);
+  return `${d.getDate()} de ${MESES[d.getMonth()]}`;
+}
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 export default async function MenuPage({
   params,
   searchParams,
 }: {
   params: Promise<{ restaurante: string }>;
-  searchParams: Promise<{ date?: string; shift?: string }>;
+  searchParams: Promise<{ date?: string }>;
 }) {
   const { restaurante } = await params;
   const session = await getSession();
@@ -19,75 +42,88 @@ export default async function MenuPage({
   const isAdmin = session.user_role === "admin";
   const sp = await searchParams;
   const today = businessDate();
-  // La empleada queda fijada a HOY + su turno; la admin navega libremente.
   const date = isAdmin && sp.date ? sp.date : today;
-  const shiftId = isAdmin && sp.shift ? sp.shift : session.shift_id;
 
-  // Turnos primero: necesitamos saber cuál es "Todo el día" para heredar su menú.
-  const { data: shifts } = await db
-    .from("shifts")
-    .select("id,name,sort_order,is_all_day")
+  // El menú es de TODO EL DÍA: lo leemos de ese turno (sin franjas horarias).
+  const allDayId = await allDayShiftId(db, session.restaurant_id);
+  const { data: menu } = await db
+    .from("daily_menu")
+    .select("price,available,dishes(name)")
     .eq("restaurant_id", session.restaurant_id)
-    .eq("active", true)
+    .eq("business_date", date)
+    .eq("shift_id", allDayId ?? "")
     .order("sort_order");
 
-  const allDayId = (shifts ?? []).find((s) => s.is_all_day)?.id ?? null;
-  const isAllDayShift = !!allDayId && allDayId === shiftId;
-  // En un turno normal mostramos también lo de "Todo el día" (heredado).
-  const shiftIds =
-    allDayId && allDayId !== shiftId ? [shiftId, allDayId] : [shiftId];
+  const items = (menu ?? [])
+    .filter((m) => m.available)
+    .map((m) => ({
+      name: (m.dishes as unknown as { name: string } | null)?.name ?? "",
+      price: Number(m.price),
+    }));
 
-  const [{ data: dishes }, { data: menu }] = await Promise.all([
-    db
-      .from("dishes")
-      .select("id,name,price,is_combo,is_extra")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("active", true)
-      .eq("is_extra", false) // adicionales NO van al menú: siempre aparecen en la venta
-      .order("name"),
-    db
-      .from("daily_menu")
-      .select("dish_id,shift_id,price,available")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("business_date", date)
-      .in("shift_id", shiftIds),
-  ]);
-
-  // own = lo fijado en ESTE turno (editable); allDay = heredado de "Todo el día".
-  const own = new Map<string, { price: number; available: boolean }>();
-  const allDay = new Map<string, { price: number; available: boolean }>();
-  for (const m of menu ?? []) {
-    const bucket =
-      m.shift_id === shiftId ? own : m.shift_id === allDayId ? allDay : null;
-    bucket?.set(m.dish_id, { price: Number(m.price), available: m.available });
-  }
-
-  const shiftName = (shifts ?? []).find((s) => s.id === shiftId)?.name ?? "turno";
+  const editHref = `/${restaurante}/menu/editar?date=${date}`;
 
   return (
-    <MenuClient
-      isAdmin={isAdmin}
-      today={today}
-      date={date}
-      shiftId={shiftId}
-      shiftName={shiftName}
-      isAllDayShift={isAllDayShift}
-      shifts={(shifts ?? []).map((s) => ({ id: s.id, name: s.name }))}
-      dishes={(dishes ?? []).map((d) => {
-        const o = own.get(d.id);
-        const a = allDay.get(d.id);
-        const eff = o ?? a;
-        return {
-          id: d.id,
-          name: d.name,
-          catalogPrice: Number(d.price),
-          inMenu: !!o,
-          inheritedFromAllDay: !o && !!a,
-          price: eff?.price ?? Number(d.price),
-          available: eff?.available ?? true,
-          kind: d.is_combo ? ("combo" as const) : d.is_extra ? ("extra" as const) : ("plato" as const),
-        };
-      })}
-    />
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-2">
+        <PageTitle title="Menú del día" />
+        <Link
+          href={editHref}
+          className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white"
+        >
+          <Pencil className="h-4 w-4" />
+          Editar
+        </Link>
+      </div>
+
+      {isAdmin ? (
+        <div className="flex items-center justify-center gap-2">
+          <Link
+            href={`/${restaurante}/menu?date=${shiftYmd(date, -1)}`}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-ink/5 text-xl font-bold"
+          >
+            ‹
+          </Link>
+          <div className="min-w-32 text-center">
+            <p className="text-base font-bold leading-tight">{dateLabel(date, today)}</p>
+            {date !== today && <p className="text-xs opacity-50">{date}</p>}
+          </div>
+          <Link
+            href={`/${restaurante}/menu?date=${shiftYmd(date, 1)}`}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-ink/5 text-xl font-bold"
+          >
+            ›
+          </Link>
+        </div>
+      ) : (
+        <p className="text-center text-sm font-semibold opacity-60">Menú de hoy</p>
+      )}
+
+      {items.length > 0 ? (
+        <div className="flex flex-col gap-2.5">
+          {items.map((it, i) => (
+            <div
+              key={i}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-ink/10 px-5 py-4"
+            >
+              <span className="text-xl font-bold leading-tight">{it.name}</span>
+              <span className="shrink-0 text-xl font-bold">{money(it.price)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-3xl bg-ink/[0.03] px-6 py-12 text-center">
+          <p className="text-base font-semibold">
+            {date === today ? "Aún no hay menú para hoy" : "No hubo menú ese día"}
+          </p>
+          <Link
+            href={editHref}
+            className="mt-4 inline-flex rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            Definir menú
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }

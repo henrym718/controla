@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui";
 import { Switch } from "@/components/ui/switch";
@@ -75,6 +75,22 @@ export default function VenderClient({
   const [creditoOpen, setCreditoOpen] = useState(false);
   const [cuentasOpen, setCuentasOpen] = useState(false);
   const [pending, start] = useTransition();
+
+  // Al cambiar la cuenta activa (entrar a una mesa, volver a venta normal, o
+  // cobrar/guardar y volver), reinicia carrito y modales. Sin esto Next reutiliza
+  // el mismo componente entre navegaciones de ?cuenta= y el carrito quedaba pegado:
+  // al "Agregar" no aparecían los ítems de la mesa y al "Guardar cambios" se volvía
+  // con el carrito lleno.
+  const cuentaKey = cuenta?.id ?? null;
+  useEffect(() => {
+    setCart(cuenta ? Object.fromEntries(cuenta.lines.map((l) => [l.key, l.qty])) : {});
+    setSearch("");
+    setOpenExtras(false);
+    setCuentasOpen(false);
+    setGuardarOpen(false);
+    setCreditoOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cuentaKey]);
 
   // byKey incluye los ítems de la cuenta que ya no estén en el menú de hoy, para
   // que el carrito sepa su precio (la cuenta guarda su propio precio).
@@ -258,7 +274,7 @@ export default function VenderClient({
     <div className="fixed inset-0 z-50 flex flex-col bg-paper text-ink">
       {/* Encabezado con el total */}
       <div
-        className="shrink-0 bg-ink px-5 pb-6 pt-5 text-white"
+        className="shrink-0 bg-ink px-5 pb-5 pt-4 text-white"
         style={{ borderBottomLeftRadius: 28, borderBottomRightRadius: 28 }}
       >
         <div className="mx-auto flex max-w-md items-center justify-between">
@@ -268,9 +284,6 @@ export default function VenderClient({
           >
             ‹ Volver
           </button>
-          <span className="truncate px-2 text-sm font-semibold text-white/60">
-            {mesaMode ? `Agregar a ${cuenta!.label}` : "Registrar venta"}
-          </span>
           {count > 0 ? (
             <button
               onClick={() => setCart({})}
@@ -282,22 +295,19 @@ export default function VenderClient({
             <span className="w-[76px]" />
           )}
         </div>
-        <div className="mx-auto mt-5 max-w-md text-center">
-          <p className="text-xs uppercase tracking-widest text-white/40">
-            {mesaMode ? `Cuenta · ${cuenta!.label}` : "Total"}
-          </p>
-          <p className="mt-1 text-6xl font-bold tabular-nums">{money(total)}</p>
-          <p className="mt-2 text-sm text-white/60">
-            {count === 0
-              ? "Toca un plato para empezar"
-              : `${count} ${count === 1 ? "ítem" : "ítems"} en la ${mesaMode ? "cuenta" : "venta"}`}
-          </p>
+        <div className="mx-auto mt-3 max-w-md text-center">
+          <p className="text-6xl font-bold tabular-nums">{money(total)}</p>
         </div>
       </div>
 
       {/* Lista de platos + adicionales */}
-      <div className="flex-1 overflow-y-auto px-5 pb-44 pt-5">
+      <div className="flex-1 overflow-y-auto px-5 pb-52 pt-5">
         <div className="mx-auto max-w-md">
+          {/* Título de la mesa (modo cuenta) */}
+          {mesaMode && (
+            <p className="mb-3 text-2xl font-bold">Agregar a {cuenta!.label}</p>
+          )}
+
           {/* Barra de cuentas abiertas (solo en venta normal) */}
           {!mesaMode && cuentasAbiertas.length > 0 && (
             <button
@@ -328,7 +338,7 @@ export default function VenderClient({
                 ) : (
                   <div className="flex flex-col gap-2">
                     {[...matchPrincipales, ...matchExtras].map((it) => (
-                      <ResultRow
+                      <ItemRow
                         key={it.key}
                         item={it}
                         qty={cart[it.key] ?? 0}
@@ -341,9 +351,9 @@ export default function VenderClient({
               ) : (
                 <>
                   {principales.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-2">
                       {principales.map((it) => (
-                        <BigCard
+                        <ItemRow
                           key={it.key}
                           item={it}
                           qty={cart[it.key] ?? 0}
@@ -392,7 +402,7 @@ export default function VenderClient({
                 <button
                   onClick={guardarCambios}
                   disabled={count === 0 || pending}
-                  className="pointer-events-auto flex w-full items-center justify-center rounded-full border border-ink/15 bg-white py-3.5 text-base font-bold text-ink transition active:scale-[0.99] disabled:opacity-40"
+                  className="pointer-events-auto flex w-full items-center justify-center rounded-full border-2 border-coral bg-ink py-4 text-lg font-bold text-white transition active:scale-[0.99] disabled:opacity-40"
                 >
                   Guardar cambios
                 </button>
@@ -406,10 +416,15 @@ export default function VenderClient({
                 >
                   {pending ? "Procesando…" : count === 0 ? "Cobrar ahora" : `Cobrar ahora · ${money(total)}`}
                 </button>
-                <div className="grid grid-cols-3 gap-2">
-                  <SecBtn label="Guardar cuenta" onClick={() => setGuardarOpen(true)} disabled={count === 0 || pending} />
-                  <SecBtn label="Crédito" onClick={() => setCreditoOpen(true)} disabled={count === 0 || pending} />
-                  <SecBtn label="Consumo" onClick={() => setConfirmConsumo(true)} disabled={count === 0 || pending} />
+                <div className="grid grid-cols-2 gap-2">
+                  <SecBtn label="Pendiente de cobro" onClick={() => setGuardarOpen(true)} disabled={count === 0 || pending} />
+                  <SecBtn label="Venta a crédito" onClick={() => setCreditoOpen(true)} disabled={count === 0 || pending} />
+                  <SecBtn
+                    label="Consumo de empleada"
+                    onClick={() => setConfirmConsumo(true)}
+                    disabled={count === 0 || pending}
+                    className="col-span-2"
+                  />
                 </div>
               </>
             )}
@@ -448,6 +463,7 @@ export default function VenderClient({
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   <Link
                     href={`/${slug}/vender?cuenta=${c.id}`}
+                    onClick={() => setCuentasOpen(false)}
                     className="rounded-full bg-ink/5 py-2 text-center text-sm font-semibold text-ink"
                   >
                     Agregar
@@ -517,12 +533,22 @@ export default function VenderClient({
 }
 
 // --------------------------------------------------------------------------- Botón secundario (acciones de venta)
-function SecBtn({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+function SecBtn({
+  label,
+  onClick,
+  disabled,
+  className = "",
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="pointer-events-auto flex items-center justify-center rounded-2xl border border-ink/15 bg-white px-1 py-3 text-center text-xs font-bold leading-tight text-ink transition active:scale-[0.98] disabled:opacity-40"
+      className={`pointer-events-auto flex items-center justify-center rounded-full border-2 border-coral bg-ink px-2 py-3.5 text-center text-sm font-bold leading-tight text-white transition active:scale-[0.98] disabled:opacity-40 ${className}`}
     >
       {label}
     </button>
@@ -551,9 +577,9 @@ function GuardarCuentaForm({
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <p className="text-lg font-bold">Guardar cuenta</p>
+        <p className="text-lg font-bold">Pendiente de cobro</p>
         <p className="mt-0.5 text-sm opacity-60">
-          Se guarda sin cobrar. La cobras luego en “Cuentas abiertas”.
+          Registra la venta sin cobrar. La cobras luego en “Cuentas abiertas”.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -706,8 +732,9 @@ function CreditoForm({
   );
 }
 
-// --------------------------------------------------------------------------- Tarjeta grande de plato
-function BigCard({
+// --------------------------------------------------------------------------- Fila de ítem (platos, adicionales y resultados — mismo formato, letra grande)
+//  Una por fila, nombre en bold grande y precio en gris (negrita normal).
+function ItemRow({
   item,
   qty,
   onAdd,
@@ -721,42 +748,42 @@ function BigCard({
   const active = qty > 0;
   return (
     <div
-      className={`relative flex min-h-[120px] flex-col justify-between rounded-3xl border p-4 transition ${
+      className={`flex items-center gap-3 rounded-2xl border px-4 py-3 transition ${
         active ? "border-ink bg-mint" : "border-ink/10 bg-white"
       }`}
     >
       <button onClick={onAdd} className="min-w-0 flex-1 text-left">
-        <p className="text-base font-bold leading-tight">{item.name}</p>
-        {item.isCombo && (
-          <span className="mt-1 inline-block rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold">
-            combo
-          </span>
-        )}
-        <p className={`mt-1 text-sm font-semibold ${active ? "opacity-70" : "opacity-50"}`}>
+        <p className="text-xl font-bold leading-snug">
+          {item.name}
+          {item.isCombo && (
+            <span className="ml-1.5 inline-block rounded-full bg-white/70 px-2 py-0.5 align-middle text-[11px] font-semibold">
+              combo
+            </span>
+          )}
+        </p>
+        <p className={`mt-0.5 text-lg font-semibold tabular-nums ${active ? "text-ink/70" : "text-ink/50"}`}>
           {money(item.price)}
         </p>
       </button>
-      <div className="mt-2 flex items-center justify-end gap-2">
-        {active && (
-          <>
-            <button
-              onClick={onRemove}
-              aria-label="Quitar uno"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-2xl font-bold leading-none"
-            >
-              −
-            </button>
-            <span className="min-w-6 text-center text-xl font-bold tabular-nums">{qty}</span>
-          </>
-        )}
-        <button
-          onClick={onAdd}
-          aria-label="Agregar uno"
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-ink text-2xl font-bold leading-none text-white"
-        >
-          +
-        </button>
-      </div>
+      {active && (
+        <>
+          <button
+            onClick={onRemove}
+            aria-label="Quitar uno"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-2xl font-bold leading-none"
+          >
+            −
+          </button>
+          <span className="min-w-7 shrink-0 text-center text-xl font-bold tabular-nums">{qty}</span>
+        </>
+      )}
+      <button
+        onClick={onAdd}
+        aria-label="Agregar uno"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-ink text-2xl font-bold leading-none text-white"
+      >
+        +
+      </button>
     </div>
   );
 }
@@ -788,62 +815,6 @@ function SearchBar({
           ×
         </button>
       )}
-    </div>
-  );
-}
-
-// --------------------------------------------------------------------------- Fila de resultado de búsqueda
-//  Todas del mismo tamaño y con el nombre completo (sin cortar).
-function ResultRow({
-  item,
-  qty,
-  onAdd,
-  onRemove,
-}: {
-  item: SellItem;
-  qty: number;
-  onAdd: () => void;
-  onRemove: () => void;
-}) {
-  const active = qty > 0;
-  return (
-    <div
-      className={`flex items-center gap-2 rounded-2xl border px-4 py-4 transition ${
-        active ? "border-ink bg-mint" : "border-ink/10 bg-white"
-      }`}
-    >
-      <button onClick={onAdd} className="min-w-0 flex-1 text-left">
-        <p className="text-base font-bold leading-snug">
-          {item.name}
-          {item.isCombo && (
-            <span className="ml-1.5 inline-block rounded-full bg-white/70 px-2 py-0.5 align-middle text-[10px] font-semibold">
-              combo
-            </span>
-          )}
-        </p>
-        <p className={`mt-0.5 text-sm font-semibold ${active ? "opacity-70" : "opacity-50"}`}>
-          {money(item.price)}
-        </p>
-      </button>
-      {active && (
-        <>
-          <button
-            onClick={onRemove}
-            aria-label="Quitar uno"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-2xl font-bold leading-none"
-          >
-            −
-          </button>
-          <span className="min-w-6 shrink-0 text-center text-xl font-bold tabular-nums">{qty}</span>
-        </>
-      )}
-      <button
-        onClick={onAdd}
-        aria-label="Agregar uno"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-2xl font-bold leading-none text-white"
-      >
-        +
-      </button>
     </div>
   );
 }
@@ -887,42 +858,15 @@ function ExtrasDrawer({
 
       {open && (
         <div className="mt-2 flex flex-col gap-2">
-          {extras.map((it) => {
-            const qty = cart[it.key] ?? 0;
-            const active = qty > 0;
-            return (
-              <div
-                key={it.key}
-                className={`flex items-center gap-2 rounded-2xl border px-3 py-2.5 ${
-                  active ? "border-ink bg-mint" : "border-ink/10 bg-white"
-                }`}
-              >
-                <button onClick={() => onAdd(it.key)} className="min-w-0 flex-1 text-left">
-                  <p className="text-sm font-semibold leading-snug">{it.name}</p>
-                  <p className="text-xs opacity-50">{money(it.price)}</p>
-                </button>
-                {active && (
-                  <>
-                    <button
-                      onClick={() => onRemove(it.key)}
-                      aria-label="Quitar uno"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xl font-bold leading-none"
-                    >
-                      −
-                    </button>
-                    <span className="min-w-5 shrink-0 text-center font-bold tabular-nums">{qty}</span>
-                  </>
-                )}
-                <button
-                  onClick={() => onAdd(it.key)}
-                  aria-label="Agregar uno"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-xl font-bold leading-none text-white"
-                >
-                  +
-                </button>
-              </div>
-            );
-          })}
+          {extras.map((it) => (
+            <ItemRow
+              key={it.key}
+              item={it}
+              qty={cart[it.key] ?? 0}
+              onAdd={() => onAdd(it.key)}
+              onRemove={() => onRemove(it.key)}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -938,7 +882,7 @@ function EmptyMenu({ slug }: { slug: string }) {
         Define qué platos se venden hoy y vuelve aquí para registrar ventas con un toque.
       </p>
       <Link
-        href={`/${slug}/menu`}
+        href={`/${slug}/menu/editar`}
         className="mt-4 inline-flex rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white"
       >
         Ir al menú

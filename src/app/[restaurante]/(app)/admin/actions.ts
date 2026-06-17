@@ -296,19 +296,43 @@ export async function crearPlato(input: {
   name: string;
   price: number;
   category?: string;
+  // Receta opcional: si vienen insumos, se asocian en la misma creación
+  // (mismo shape que setReceta) para no tener que abrir el modal de receta aparte.
+  components?: { ingredientId: string; qty: number }[];
 }): Promise<ActionResult> {
   const { session, db } = await admin();
-  const { error } = await db.from("dishes").insert({
-    restaurant_id: session.restaurant_id,
-    name: input.name,
-    price: input.price,
-    category: input.category === "sopa" ? "sopa" : "principal",
-  });
-  if (error) return { error: error.message };
-  await logAdmin(session, db, "plato_config", `Creó el plato ${input.name} (${money(input.price)})`, {
-    name: input.name,
-    price: input.price,
-  });
+  const { data: dish, error } = await db
+    .from("dishes")
+    .insert({
+      restaurant_id: session.restaurant_id,
+      name: input.name,
+      price: input.price,
+      category: input.category === "sopa" ? "sopa" : "principal",
+    })
+    .select("id")
+    .single();
+  if (error || !dish) return { error: error?.message ?? "No pude crear el plato." };
+
+  const comps = (input.components ?? []).filter((c) => c.ingredientId && c.qty > 0);
+  if (comps.length) {
+    const { error: ce } = await db.from("dish_components").insert(
+      comps.map((c) => ({
+        restaurant_id: session.restaurant_id,
+        dish_id: dish.id,
+        ingredient_id: c.ingredientId,
+        qty: c.qty,
+      })),
+    );
+    if (ce) return { error: ce.message };
+  }
+
+  await logAdmin(
+    session,
+    db,
+    "plato_config",
+    `Creó el plato ${input.name} (${money(input.price)}${comps.length ? `, ${comps.length} insumo${comps.length === 1 ? "" : "s"}` : ""})`,
+    { name: input.name, price: input.price, components: comps.length },
+  );
   revalidatePath(`/${session.slug}/catalogo`);
   return { ok: true };
 }
@@ -527,6 +551,9 @@ export async function agregarProductoInventario(input: {
   totalCost?: number | null;
   salePrice?: number | null;
   consumoVisible?: boolean;
+  // Si es false, solo se crea el producto (nombre + unidad), sin stock ni costo.
+  // El stock entra luego desde una compra/gasto. Por defecto true (compatibilidad).
+  registrarInicial?: boolean;
 }): Promise<ActionResult> {
   const { session, db } = await admin();
   const name = input.name.trim();
@@ -535,8 +562,10 @@ export async function agregarProductoInventario(input: {
   const unit = input.unit ?? "unidad";
   const sellable = input.salePrice != null && input.salePrice > 0;
   const qty = Number(input.qty) || 0;
-  if (qty <= 0) return { error: "Indica la cantidad que tienes." };
-  const unitCost = (Number(input.totalCost) || 0) / qty;
+  // Registrar inventario inicial solo si se pidió explícitamente y hay cantidad.
+  const registrarInicial = (input.registrarInicial ?? true) && qty > 0;
+  if (registrarInicial && qty <= 0) return { error: "Indica la cantidad que tienes." };
+  const unitCost = registrarInicial ? (Number(input.totalCost) || 0) / qty : 0;
   const consumoVisible = input.consumoVisible ?? kind === "granel";
 
   const { data: existing } = await db
@@ -570,7 +599,8 @@ export async function agregarProductoInventario(input: {
     await db
       .from("ingredients")
       .update({
-        last_unit_cost: unitCost,
+        // Sin inventario inicial no pisamos el costo ya conocido del producto.
+        ...(registrarInicial ? { last_unit_cost: unitCost } : {}),
         active: true,
         kind,
         costing_method: kind === "granel" ? "pool" : "conversion",
@@ -581,22 +611,24 @@ export async function agregarProductoInventario(input: {
       .eq("id", ingId);
   }
 
-  // Stock inicial: todos los insumos llevan cantidad (contable y granel).
-  await db.from("inventory_movements").insert({
-    restaurant_id: session.restaurant_id,
-    ingredient_id: ingId!,
-    shift_session_id: session.shift_session_id,
-    business_date: businessDate(),
-    type: "compra",
-    qty,
-    unit_cost: unitCost,
-  });
+  // Stock inicial (opcional): solo si se pidió registrar inventario inicial.
+  if (registrarInicial) {
+    await db.from("inventory_movements").insert({
+      restaurant_id: session.restaurant_id,
+      ingredient_id: ingId!,
+      shift_session_id: session.shift_session_id,
+      business_date: businessDate(),
+      type: "compra",
+      qty,
+      unit_cost: unitCost,
+    });
+  }
 
   await logAdmin(
     session,
     db,
     "producto_nuevo",
-    `Agregó ${qty} × ${name} al inventario`,
+    registrarInicial ? `Agregó ${qty} × ${name} al inventario` : `Creó ${name} en el inventario`,
     { name, kind, unit },
   );
 

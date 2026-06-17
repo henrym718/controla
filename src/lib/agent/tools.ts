@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/supabase/database.types";
 import type { SessionClaims } from "@/lib/auth/jwt";
 import { businessDate } from "@/lib/shifts";
-import { menuShiftIds, dedupeMenu } from "@/lib/menu";
+import { menuShiftIds, dedupeMenu, allDayShiftId } from "@/lib/menu";
 import { computeDaySummary } from "@/lib/reports";
 import { logActivity, type EventCode } from "@/lib/activity";
 
@@ -97,6 +97,12 @@ async function resolvePackaging(ctx: ToolCtx, name: string) {
     .ilike("name", `%${name}%`)
     .limit(1);
   return data?.[0] ?? null;
+}
+
+/** El menú es de TODO EL DÍA: escribimos siempre sobre ese turno (no el actual). */
+async function menuShift(ctx: ToolCtx): Promise<string> {
+  const allDay = await allDayShiftId(ctx.db, ctx.session.restaurant_id);
+  return allDay ?? ctx.session.shift_id;
 }
 
 /** Platos del menú de HOY del turno actual (incluye los de "Todo el día"). */
@@ -370,7 +376,7 @@ export const TOOLS: Record<string, Tool> = {
       const { error } = await ctx.db.rpc("fijar_menu", {
         p_restaurant: ctx.session.restaurant_id,
         p_date: businessDate(),
-        p_shift: ctx.session.shift_id,
+        p_shift: await menuShift(ctx),
         p_user: ctx.session.user_id,
         p_items: items as unknown as Json,
       });
@@ -425,7 +431,7 @@ export const TOOLS: Record<string, Tool> = {
         .update({ available: false })
         .eq("restaurant_id", ctx.session.restaurant_id)
         .eq("business_date", businessDate())
-        .eq("shift_id", ctx.session.shift_id)
+        .eq("shift_id", await menuShift(ctx))
         .eq("dish_id", dish.id);
       await logEvent(ctx, "agotado", `Marcó "${dish.name}" como agotado hoy`, {
         dish: dish.name,

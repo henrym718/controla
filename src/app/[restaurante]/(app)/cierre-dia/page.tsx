@@ -4,7 +4,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDate } from "@/lib/shifts";
 import { computeDaySummary } from "@/lib/reports";
 import CierreDiaWizard, { type WizardTurno } from "./cierre-dia-client";
-import type { ConteoEstado } from "../conteo/conteo-client";
 
 interface TurnoRaw {
   shift: string;
@@ -28,14 +27,8 @@ export default async function CierreDiaPage({
   const db = createAdminClient();
   const date = businessDate();
 
-  const [cuadresRes, conteoRes, poolsRes, summary, dcRes, ingsRes, stockRes] = await Promise.all([
+  const [cuadresRes, summary, dcRes, ingsRes, stockRes] = await Promise.all([
     db.rpc("cuadres_dia", { p_restaurant: session.restaurant_id, p_date: date }),
-    db.rpc("conteo_estado", { p_restaurant: session.restaurant_id, p_date: date }),
-    db
-      .from("v_pool_granel")
-      .select("ingredient_id,name,pool_cost")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("business_date", date),
     computeDaySummary(db, session.restaurant_id, date),
     db
       .from("daily_close")
@@ -67,13 +60,6 @@ export default async function CierreDiaPage({
     descuadre: t.cash_discrepancy == null ? null : Number(t.cash_discrepancy),
   }));
 
-  const conteo =
-    (conteoRes.data as unknown as ConteoEstado | null) ?? { date, locked: false, items: [] };
-  const pools = (poolsRes.data ?? []).map((p) => ({
-    ingredientId: p.ingredient_id ?? "",
-    name: p.name ?? "",
-    poolCost: Number(p.pool_cost ?? 0),
-  }));
   const closed = dcRes.data?.status === "closed";
 
   // Productos del inventario (con su stock) para dar de baja los dañados / perdidos.
@@ -94,8 +80,6 @@ export default async function CierreDiaPage({
       date={date}
       closed={closed}
       turnos={turnos}
-      conteo={conteo}
-      pools={pools}
       productos={productos}
       summary={summary}
     />

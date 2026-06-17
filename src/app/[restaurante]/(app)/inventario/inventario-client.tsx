@@ -24,7 +24,9 @@ interface Product {
 }
 
 const inputCls =
-  "w-full rounded-xl border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40";
+  "w-full rounded-xl border border-ink/15 px-3 py-2.5 text-base outline-none focus:border-ink/40";
+
+const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 // Unidades estándar para registrar y consumir (cantidad + unidad).
 const UNITS = ["unidad", "libra", "kilo", "gramo", "funda", "litro", "ml"] as const;
@@ -33,6 +35,7 @@ export default function InventarioClient({ products }: { products: Product[] }) 
   const router = useRouter();
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [, start] = useTransition();
 
   const onToggleConsumo = (id: string, visible: boolean) =>
@@ -40,6 +43,11 @@ export default function InventarioClient({ products }: { products: Product[] }) 
       await toggleConsumoVisible({ ingredientId: id, visible });
       router.refresh();
     });
+
+  const q = search.trim().toLowerCase();
+  const visibles = q
+    ? products.filter((p) => p.name.toLowerCase().includes(q))
+    : products;
 
   return (
     <div className="flex flex-col gap-4">
@@ -54,10 +62,19 @@ export default function InventarioClient({ products }: { products: Product[] }) 
         </button>
       </div>
 
+      {products.length > 0 && (
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar producto…"
+          className="w-full rounded-2xl border border-ink/15 bg-white px-4 py-3 text-lg outline-none focus:border-ink/40"
+        />
+      )}
+
       <ProductTable
         title="Para cocinar"
         hint="se usa en las recetas / consumo"
-        products={products.filter((p) => !p.sellable)}
+        products={visibles.filter((p) => !p.sellable)}
         onEdit={setEditing}
         onToggleConsumo={onToggleConsumo}
         showConsumo
@@ -65,7 +82,7 @@ export default function InventarioClient({ products }: { products: Product[] }) 
       <ProductTable
         title="De venta"
         hint="se vende directo al cliente"
-        products={products.filter((p) => p.sellable)}
+        products={visibles.filter((p) => p.sellable)}
         onEdit={setEditing}
         showSale
       />
@@ -73,6 +90,11 @@ export default function InventarioClient({ products }: { products: Product[] }) 
       {products.length === 0 && (
         <p className="rounded-2xl bg-ink/[0.03] px-4 py-8 text-center text-sm opacity-50">
           Sin productos. Toca + para agregar.
+        </p>
+      )}
+      {q && visibles.length === 0 && (
+        <p className="rounded-2xl bg-ink/[0.03] px-4 py-6 text-center text-sm opacity-60">
+          No encuentro “{search}”. Toca + para crearlo.
         </p>
       )}
       <p className="text-center text-xs opacity-50">
@@ -108,54 +130,69 @@ function ProductTable({
   showSale?: boolean;
   showConsumo?: boolean;
 }) {
+  // Valor del inventario = suma de (stock × costo unitario) de cada producto.
+  const totalInventario = products.reduce(
+    (s, p) => s + (p.stock ?? 0) * p.cost,
+    0,
+  );
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
-          {title} · {products.length}
+        <p className="text-base font-bold">
+          {title} <span className="opacity-50">· {products.length}</span>
         </p>
-        <p className="text-[11px] opacity-40">{hint}</p>
+        <p className="text-xs opacity-60">{hint}</p>
       </div>
       <div className="overflow-hidden rounded-3xl border border-ink/10">
-        <div className="flex items-center bg-ink/5 px-4 py-2 text-xs font-semibold opacity-60">
-          <span className="flex-1">Producto</span>
-          {showSale && <span className="w-16 text-right">Venta</span>}
-          <span className="w-14 text-right">Stock</span>
-          <span className="w-16 text-right">Costo u.</span>
-          {showConsumo && <span className="w-20 text-right">Consumo</span>}
-        </div>
-        {products.map((p) => (
-          <div key={p.id} className="flex items-center border-t border-ink/5 px-4 py-2.5 text-sm">
-            <button onClick={() => onEdit(p.id)} className="flex min-w-0 flex-1 flex-col text-left">
-              <span className="truncate font-medium">{p.name}</span>
-              <span className="text-[11px] opacity-50">
-                {p.unit ?? "unidad"}
-                {showConsumo ? ` · ${p.consumoVisible ? "la cocinera registra" : "baja al vender"}` : ""}
-              </span>
-            </button>
-            {showSale && (
-              <span className="w-16 text-right font-semibold text-teal">
-                {p.salePrice != null ? `$${p.salePrice.toFixed(2)}` : "—"}
-              </span>
-            )}
-            <span className="w-14 text-right">{p.stock != null ? p.stock : "—"}</span>
-            <span className="w-16 text-right opacity-70">${p.cost.toFixed(2)}</span>
-            {showConsumo && (
-              <span className="w-20 text-right">
-                <button
-                  onClick={() => onToggleConsumo?.(p.id, !p.consumoVisible)}
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                    p.consumoVisible ? "bg-mint text-ink" : "bg-ink/5 opacity-50"
-                  }`}
-                >
-                  {p.consumoVisible ? "Sí" : "No"}
-                </button>
-              </span>
-            )}
+        {products.map((p) => {
+          const totalCost = (p.stock ?? 0) * p.cost;
+          return (
+            <div
+              key={p.id}
+              className="flex items-center gap-3 border-t border-ink/5 px-4 py-3 first:border-t-0"
+            >
+              <button
+                onClick={() => onEdit(p.id)}
+                className="flex min-w-0 flex-1 flex-col text-left"
+              >
+                <span className="truncate text-lg font-semibold leading-tight">{p.name}</span>
+                <span className="mt-1 text-sm opacity-70">
+                  <span className="font-semibold">{p.stock != null ? p.stock : "—"}</span>
+                  {p.unit ? ` ${p.unit}` : ""} · {money(p.cost)} c/u
+                </span>
+                {showConsumo && (
+                  <span className="text-sm opacity-70">
+                    {p.consumoVisible ? "la cocinera registra" : "baja al vender"}
+                  </span>
+                )}
+                {showSale && p.salePrice != null && (
+                  <span className="text-sm opacity-70">vende {money(p.salePrice)}</span>
+                )}
+              </button>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <span className="text-base font-bold">{money(totalCost)}</span>
+                {showConsumo && (
+                  <button
+                    onClick={() => onToggleConsumo?.(p.id, !p.consumoVisible)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      p.consumoVisible ? "bg-mint text-ink" : "bg-ink/5 opacity-60"
+                    }`}
+                  >
+                    {p.consumoVisible ? "Consumo ✓" : "Consumo"}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {products.length === 0 ? (
+          <p className="px-4 py-5 text-center text-sm opacity-50">Nada aquí todavía.</p>
+        ) : (
+          <div className="flex items-center justify-between border-t border-ink/10 bg-ink/[0.03] px-4 py-3">
+            <span className="text-sm font-semibold opacity-70">Total en inventario</span>
+            <span className="text-lg font-bold">{money(totalInventario)}</span>
           </div>
-        ))}
-        {products.length === 0 && (
-          <p className="px-4 py-5 text-center text-sm opacity-40">Nada aquí todavía.</p>
         )}
       </div>
     </div>
@@ -171,6 +208,89 @@ function UnitPicker({ value, onChange }: { value: string; onChange: (v: string) 
         </option>
       ))}
     </select>
+  );
+}
+
+// Cantidad + costo total + costo por unidad, con cálculo en ambos sentidos.
+// Pones la cantidad y luego UNO de los dos costos; el otro se calcula solo.
+function useCosto() {
+  const [qty, setQtyRaw] = useState("");
+  const [total, setTotalRaw] = useState("");
+  const [unitCost, setUnitRaw] = useState("");
+  // Cuál costo fijó el usuario al final (el otro se deriva al cambiar la cantidad).
+  const [anchor, setAnchor] = useState<"total" | "unit">("total");
+
+  const num = (s: string) => Number(s) || 0;
+  const fmt = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 100) / 100) : "");
+
+  const setQty = (v: string) => {
+    setQtyRaw(v);
+    const q = num(v);
+    if (q <= 0) return;
+    if (anchor === "total" && num(total) > 0) setUnitRaw(fmt(num(total) / q));
+    else if (anchor === "unit" && num(unitCost) > 0) setTotalRaw(fmt(num(unitCost) * q));
+  };
+
+  const setTotal = (v: string) => {
+    setTotalRaw(v);
+    setAnchor("total");
+    const q = num(qty);
+    if (q > 0 && v.trim() !== "") setUnitRaw(fmt(num(v) / q));
+  };
+
+  const setUnitCost = (v: string) => {
+    setUnitRaw(v);
+    setAnchor("unit");
+    const q = num(qty);
+    if (q > 0 && v.trim() !== "") setTotalRaw(fmt(num(v) * q));
+  };
+
+  return {
+    qty,
+    total,
+    unitCost,
+    setQty,
+    setTotal,
+    setUnitCost,
+    q: num(qty),
+    t: num(total),
+  };
+}
+
+type Costo = ReturnType<typeof useCosto>;
+
+function CostoFields({ unit, costo }: { unit: string; costo: Costo }) {
+  const clean = (v: string) => v.replace(/[^\d.]/g, "");
+  return (
+    <div className="flex flex-col gap-2">
+      <input
+        value={costo.qty}
+        onChange={(e) => costo.setQty(clean(e.target.value))}
+        inputMode="decimal"
+        className={inputCls}
+        placeholder={`Cantidad (${unit})`}
+      />
+      <div className="flex gap-2">
+        <input
+          value={costo.total}
+          onChange={(e) => costo.setTotal(clean(e.target.value))}
+          inputMode="decimal"
+          className={inputCls}
+          placeholder="Costo total $"
+        />
+        <input
+          value={costo.unitCost}
+          onChange={(e) => costo.setUnitCost(clean(e.target.value))}
+          inputMode="decimal"
+          className={inputCls}
+          placeholder={`Costo por ${unit} $`}
+        />
+      </div>
+      <p className="text-center text-xs opacity-60">
+        Pon la cantidad y luego el costo total <b>o</b> el costo por {unit}: el otro se calcula
+        solo.
+      </p>
+    </div>
   );
 }
 
@@ -209,35 +329,34 @@ function AddModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// Insumo para cocinar: cantidad + costo. El switch decide el comportamiento.
+// Insumo para cocinar: nombre + unidad. El stock inicial (cantidad + costo) es
+// opcional vía switch; si no, el producto se crea sin stock y entra luego con
+// una compra/gasto.
 function FormInsumo({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [unit, setUnit] = useState<string>("unidad");
-  const [qty, setQty] = useState("");
-  const [total, setTotal] = useState("");
+  const [registrarInicial, setRegistrarInicial] = useState(false);
+  const costo = useCosto();
   // Activado por defecto: la cocinera lo registra (arroz, tomate, carne). El
   // admin lo apaga para lo que se descuenta solo al vender (presa, huevo).
   const [consumo, setConsumo] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  const q = Number(qty) || 0;
-  const t = Number(total) || 0;
-  const unitCost = q > 0 ? t / q : 0;
-
   const submit = () => {
     setMsg(null);
     if (!name.trim()) return setMsg("Escribe el nombre.");
-    if (q <= 0) return setMsg("Indica la cantidad que tienes.");
+    if (registrarInicial && costo.q <= 0) return setMsg("Indica la cantidad que tienes.");
     start(async () => {
       const r = await agregarProductoInventario({
         name: name.trim(),
         kind: consumo ? "granel" : "contable",
         unit,
-        qty: q,
-        totalCost: t,
+        qty: registrarInicial ? costo.q : null,
+        totalCost: registrarInicial ? costo.t : null,
         salePrice: null,
         consumoVisible: consumo,
+        registrarInicial,
       });
       if (r.error) setMsg(r.error);
       else onDone();
@@ -246,8 +365,9 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-[11px] opacity-50">
-        Lo que usas para cocinar. Pon cuánto tienes ahora y cuánto te costó.
+      <p className="text-xs opacity-60">
+        Lo que usas para cocinar. Crea el producto con su nombre y unidad; el stock lo registras
+        ahora o luego desde una compra.
       </p>
 
       <input
@@ -257,33 +377,27 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
         placeholder="Arroz, presa de pollo, tomate…"
       />
 
-      <label className="text-xs font-medium opacity-60">Unidad</label>
+      <label className="text-sm font-medium opacity-70">Unidad</label>
       <UnitPicker value={unit} onChange={setUnit} />
 
-      <div className="flex gap-2">
-        <input
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          inputMode="decimal"
-          className={inputCls}
-          placeholder={`Cuánto tienes (${unit})`}
-        />
-        <input
-          value={total}
-          onChange={(e) => setTotal(e.target.value)}
-          inputMode="decimal"
-          className={inputCls}
-          placeholder="Costo total $"
-        />
+      <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Registrar inventario inicial</p>
+          <p className="text-xs opacity-60">
+            {registrarInicial
+              ? "Pondrás cuánto tienes ahora y cuánto costó."
+              : "Solo crea el producto. El stock entra luego con una compra."}
+          </p>
+        </div>
+        <Switch checked={registrarInicial} onCheckedChange={setRegistrarInicial} />
       </div>
-      <p className="text-center text-sm">
-        Costo por {unit}: <span className="font-bold">${unitCost.toFixed(2)}</span>
-      </p>
+
+      {registrarInicial && <CostoFields unit={unit} costo={costo} />}
 
       <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
         <div className="min-w-0">
           <p className="text-sm font-medium">¿La cocinera registra cuánto usa?</p>
-          <p className="text-[11px] opacity-50">
+          <p className="text-xs opacity-60">
             {consumo
               ? "Sí: ella anota lo que gastó (arroz, tomate, carne)."
               : "No: se descuenta solo al vender (presa, huevo)."}
@@ -304,33 +418,33 @@ function FormInsumo({ onDone }: { onDone: () => void }) {
   );
 }
 
-// Producto que se VENDE directo (cola, agua…): contable + precio de venta.
+// Producto que se VENDE directo (cola, agua…): contable + precio de venta. El
+// stock inicial es opcional vía switch.
 function FormVenta({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [unit, setUnit] = useState<string>("unidad");
-  const [qty, setQty] = useState("");
-  const [total, setTotal] = useState("");
+  const [registrarInicial, setRegistrarInicial] = useState(false);
+  const costo = useCosto();
   const [salePrice, setSalePrice] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const q = Number(qty) || 0;
-  const t = Number(total) || 0;
-  const unitCost = q > 0 ? t / q : 0;
   const sp = Number(salePrice) || 0;
 
   const submit = () => {
     setMsg(null);
-    if (!name.trim() || q <= 0) return setMsg("Completa nombre y cantidad.");
+    if (!name.trim()) return setMsg("Escribe el nombre.");
     if (sp <= 0) return setMsg("Indica el precio de venta.");
+    if (registrarInicial && costo.q <= 0) return setMsg("Indica la cantidad que tienes.");
     start(async () => {
       const r = await agregarProductoInventario({
         name: name.trim(),
         kind: "contable",
         unit,
-        qty: q,
-        totalCost: t,
+        qty: registrarInicial ? costo.q : null,
+        totalCost: registrarInicial ? costo.t : null,
         salePrice: sp,
         consumoVisible: false,
+        registrarInicial,
       });
       if (r.error) setMsg(r.error);
       else onDone();
@@ -339,21 +453,44 @@ function FormVenta({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="mb-1 text-xs opacity-50">
+      <p className="mb-1 text-xs opacity-60">
         Lo que se vende directo al cliente (cola, agua, jugo…). Se descuenta del stock al venderlo.
       </p>
-      <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Nombre (Cola 1 litro, Agua…)" />
-      <label className="text-xs font-medium opacity-60">Unidad</label>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className={inputCls}
+        placeholder="Nombre (Cola 1 litro, Agua…)"
+      />
+      <label className="text-sm font-medium opacity-70">Unidad</label>
       <UnitPicker value={unit} onChange={setUnit} />
-      <div className="flex gap-2">
-        <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="numeric" className={inputCls} placeholder="Cantidad" />
-        <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Costo total $" />
+      <input
+        value={salePrice}
+        onChange={(e) => setSalePrice(e.target.value.replace(/[^\d.]/g, ""))}
+        inputMode="decimal"
+        className={inputCls}
+        placeholder="Precio de venta al público $"
+      />
+
+      <div className="mt-1 flex items-center justify-between gap-3 rounded-2xl bg-ink/[0.03] px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Registrar inventario inicial</p>
+          <p className="text-xs opacity-60">
+            {registrarInicial
+              ? "Pondrás cuánto tienes ahora y cuánto costó."
+              : "Solo crea el producto. El stock entra luego con una compra."}
+          </p>
+        </div>
+        <Switch checked={registrarInicial} onCheckedChange={setRegistrarInicial} />
       </div>
-      <p className="text-center text-sm">
-        Costo por unidad: <span className="font-bold">${unitCost.toFixed(2)}</span>
-      </p>
-      <input value={salePrice} onChange={(e) => setSalePrice(e.target.value)} inputMode="decimal" className={inputCls} placeholder="Precio de venta al público $" />
-      <button onClick={submit} disabled={pending} className="mt-1 rounded-full bg-ink py-3 font-semibold text-white">
+
+      {registrarInicial && <CostoFields unit={unit} costo={costo} />}
+
+      <button
+        onClick={submit}
+        disabled={pending}
+        className="mt-1 rounded-full bg-ink py-3 font-semibold text-white"
+      >
         {pending ? "Guardando…" : "Agregar para venta"}
       </button>
       {msg && <p className="text-center text-sm text-coral">{msg}</p>}
