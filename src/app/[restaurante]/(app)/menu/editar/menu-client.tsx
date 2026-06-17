@@ -46,6 +46,8 @@ function dateLabel(date: string, today: string): string {
 const inputCls =
   "rounded-xl border border-ink/15 px-2 py-1.5 text-sm outline-none focus:border-ink/40";
 const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
+const norm = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 export default function MenuClient({
   isAdmin,
@@ -63,6 +65,11 @@ export default function MenuClient({
   const boardPath = pathname.replace(/\/editar$/, ""); // .../menu
   const [showCopy, setShowCopy] = useState(false);
   const [bulkPending, startBulk] = useTransition();
+  const [query, setQuery] = useState("");
+  const [openGroups, setOpenGroups] = useState<Record<DishRow["kind"], boolean>>({
+    plato: false,
+    combo: false,
+  });
 
   const addAll = (items: DishRow[]) => {
     const payload = items.map((d) => ({ dishId: d.id, price: d.catalogPrice }));
@@ -126,37 +133,89 @@ export default function MenuClient({
         </div>
       )}
 
-      <div className="flex flex-col gap-4">
-        {(
-          [
-            { label: "Platos", items: fuera.filter((d) => d.kind === "plato") },
-            { label: "Combos", items: fuera.filter((d) => d.kind === "combo") },
-          ] as const
-        ).map((g) =>
-          g.items.length === 0 ? null : (
-            <div key={g.label} className="flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
-                  Agregar — {g.label}
-                </p>
-                {g.items.length > 1 && (
-                  <button
-                    onClick={() => addAll(g.items)}
-                    disabled={bulkPending}
-                    className="rounded-full bg-ink px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
-                  >
-                    {bulkPending ? "Agregando…" : "Agregar todos"}
-                  </button>
-                )}
-              </div>
-              {g.items.map((d) => (
-                <Row key={d.id} dish={d} date={date} />
-              ))}
-            </div>
-          ),
-        )}
-        {fuera.length === 0 && (
+      <div className="flex flex-col gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+          Opciones de menú
+        </p>
+
+        {fuera.length === 0 ? (
           <p className="text-sm opacity-50">Todo el catálogo ya está en el menú.</p>
+        ) : (
+          <>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 opacity-40">
+                🔍
+              </span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar plato o combo disponible…"
+                className="w-full rounded-2xl border border-ink/15 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-ink/40"
+              />
+            </div>
+
+            {(
+              [
+                { kind: "plato", label: "Agregar platos" },
+                { kind: "combo", label: "Agregar combos" },
+              ] as const
+            ).map((g) => {
+              const groupItems = fuera.filter((d) => d.kind === g.kind);
+              if (groupItems.length === 0) return null;
+              const q = norm(query.trim());
+              const items =
+                q === "" ? groupItems : groupItems.filter((d) => norm(d.name).includes(q));
+              const expanded = q !== "" || openGroups[g.kind];
+
+              return (
+                <div key={g.kind} className="overflow-hidden rounded-2xl border border-ink/10">
+                  <button
+                    onClick={() =>
+                      setOpenGroups((p) => ({ ...p, [g.kind]: !p[g.kind] }))
+                    }
+                    className="flex w-full items-center justify-between gap-2 bg-ink/[0.03] px-4 py-3 text-left"
+                  >
+                    <span className="text-sm font-semibold">
+                      {g.label}
+                      <span className="ml-2 text-xs font-normal opacity-50">
+                        {q !== ""
+                          ? `${items.length} resultado${items.length === 1 ? "" : "s"}`
+                          : `${groupItems.length} disponible${groupItems.length === 1 ? "" : "s"}`}
+                      </span>
+                    </span>
+                    <span
+                      className={`text-base transition-transform ${expanded ? "rotate-180" : ""}`}
+                    >
+                      ⌄
+                    </span>
+                  </button>
+
+                  {expanded && (
+                    <div className="flex flex-col gap-2 border-t border-ink/10 p-3">
+                      {items.length > 1 && (
+                        <button
+                          onClick={() => addAll(items)}
+                          disabled={bulkPending}
+                          className="self-end rounded-full bg-ink px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {bulkPending ? "Agregando…" : `Agregar todos (${items.length})`}
+                        </button>
+                      )}
+                      {items.length === 0 ? (
+                        <p className="px-1 py-2 text-sm opacity-50">Sin resultados.</p>
+                      ) : (
+                        <div className="flex max-h-80 flex-col gap-2 overflow-y-auto pr-1">
+                          {items.map((d) => (
+                            <Row key={d.id} dish={d} date={date} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>
