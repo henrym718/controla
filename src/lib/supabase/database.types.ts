@@ -2197,6 +2197,13 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      recetas_efectivas: {
+        Args: { p_dish: string }
+        Returns: {
+          ingredient_id: string
+          qty: number
+        }[]
+      }
       registrar_cobro_credito: {
         Args: {
           p_amount: number

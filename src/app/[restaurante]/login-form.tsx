@@ -118,7 +118,7 @@ export default function LoginForm({
             if (cajaInvalid) setCajaInvalid(false);
           }}
           placeholder={
-            opening ? "Caja inicial (escribe 0 si no hay)" : "Caja inicial (solo si abres el turno)"
+            opening ? "Caja inicial (escribe 0 si no hay)" : "Corregir caja (deja 0 si no cambia)"
           }
           className={`rounded-2xl border px-4 py-3 text-sm outline-none ${
             cajaInvalid ? "border-coral focus:border-coral" : "border-ink/15 focus:border-ink/40"
@@ -131,7 +131,8 @@ export default function LoginForm({
         )}
         {shiftId !== "" && !opening && (
           <p className="px-1 text-xs opacity-50">
-            Te unes a un turno ya abierto; la caja ya fue registrada.
+            Te unes a un turno ya abierto. Escribe un monto solo si quieres corregir la caja
+            inicial; 0 o vacío la dejan igual.
           </p>
         )}
       </div>
