@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSession } from "@/lib/auth/session";
 import { businessDate } from "@/lib/shifts";
+import { allDayShiftId } from "@/lib/menu";
 import { logActivity, type EventCode } from "@/lib/activity";
 import type { SessionClaims } from "@/lib/auth/jwt";
 
@@ -47,23 +48,28 @@ async function nombrePlato(db: MenuDb, dishId: string): Promise<string> {
   return data?.name ?? "un plato";
 }
 
-// La admin puede programar cualquier fecha/turno; la empleada solo HOY + su turno.
-function target(session: SessionClaims, date?: string, shiftId?: string) {
-  if (session.user_role === "admin") {
-    return { date: date || businessDate(), shiftId: shiftId || session.shift_id };
-  }
-  return { date: businessDate(), shiftId: session.shift_id };
+// El menú es de TODO EL DÍA (no hay franjas horarias): el turno SIEMPRE es el de
+// "Todo el día". La admin puede editar cualquier fecha; la empleada solo HOY.
+async function menuTarget(session: SessionClaims, db: MenuDb, date?: string) {
+  const allDay = await allDayShiftId(db, session.restaurant_id);
+  const shiftId = allDay ?? session.shift_id;
+  const d = session.user_role === "admin" ? date || businessDate() : businessDate();
+  return { date: d, shiftId };
+}
+
+function revalidateMenu(slug: string) {
+  revalidatePath(`/${slug}/menu`);
+  revalidatePath(`/${slug}/menu/editar`);
 }
 
 export async function agregarAlMenu(input: {
   dishId: string;
   price: number;
   date?: string;
-  shiftId?: string;
 }): Promise<ActionResult> {
   const { session, db } = await ctx();
   if (!(input.price > 0)) return { error: "Indica un precio válido." };
-  const t = target(session, input.date, input.shiftId);
+  const t = await menuTarget(session, db, input.date);
   const { error } = await db.from("daily_menu").upsert(
     {
       restaurant_id: session.restaurant_id,
@@ -83,7 +89,7 @@ export async function agregarAlMenu(input: {
     `Agregó ${await nombrePlato(db, input.dishId)} al menú del ${t.date} (${money(input.price)})`,
     { date: t.date, price: input.price },
   );
-  revalidatePath(`/${session.slug}/menu`);
+  revalidateMenu(session.slug);
   return { ok: true };
 }
 
@@ -91,10 +97,9 @@ export async function agregarAlMenu(input: {
 export async function agregarVariosAlMenu(input: {
   items: { dishId: string; price: number }[];
   date?: string;
-  shiftId?: string;
 }): Promise<ActionResult> {
   const { session, db } = await ctx();
-  const t = target(session, input.date, input.shiftId);
+  const t = await menuTarget(session, db, input.date);
   const rows = (input.items ?? [])
     .filter((i) => i.dishId && i.price > 0)
     .map((i) => ({
@@ -117,17 +122,16 @@ export async function agregarVariosAlMenu(input: {
     `Agregó ${rows.length} ítem(s) al menú del ${t.date}`,
     { date: t.date, count: rows.length },
   );
-  revalidatePath(`/${session.slug}/menu`);
+  revalidateMenu(session.slug);
   return { ok: true, count: rows.length };
 }
 
 export async function quitarDelMenu(input: {
   dishId: string;
   date?: string;
-  shiftId?: string;
 }): Promise<ActionResult> {
   const { session, db } = await ctx();
-  const t = target(session, input.date, input.shiftId);
+  const t = await menuTarget(session, db, input.date);
   const nombre = await nombrePlato(db, input.dishId);
   await db
     .from("daily_menu")
@@ -137,7 +141,7 @@ export async function quitarDelMenu(input: {
     .eq("shift_id", t.shiftId)
     .eq("dish_id", input.dishId);
   await logMenu(session, db, "menu", `Quitó ${nombre} del menú del ${t.date}`, { date: t.date });
-  revalidatePath(`/${session.slug}/menu`);
+  revalidateMenu(session.slug);
   return { ok: true };
 }
 
@@ -145,10 +149,9 @@ export async function toggleAgotado(input: {
   dishId: string;
   available: boolean;
   date?: string;
-  shiftId?: string;
 }): Promise<ActionResult> {
   const { session, db } = await ctx();
-  const t = target(session, input.date, input.shiftId);
+  const t = await menuTarget(session, db, input.date);
   await db
     .from("daily_menu")
     .update({ available: input.available })
@@ -163,15 +166,13 @@ export async function toggleAgotado(input: {
     `${input.available ? "Repuso" : "Marcó agotado"} ${await nombrePlato(db, input.dishId)}`,
     { available: input.available },
   );
-  revalidatePath(`/${session.slug}/menu`);
+  revalidateMenu(session.slug);
   return { ok: true };
 }
 
-// Copia el menú de (srcDate, srcShift) a varias fechas del turno destino. Solo admin.
+// Copia el menú (de TODO EL DÍA) de srcDate a varias fechas. Solo admin.
 export async function copiarMenu(input: {
   srcDate: string;
-  srcShiftId: string;
-  targetShiftId: string;
   dates: string[];
 }): Promise<ActionResult> {
   const { session, db } = await ctx();
@@ -179,19 +180,22 @@ export async function copiarMenu(input: {
     return { error: "Solo la administradora puede programar." };
   if (!input.dates.length) return { error: "Elige al menos una fecha." };
 
+  const allDay = await allDayShiftId(db, session.restaurant_id);
+  const shiftId = allDay ?? session.shift_id;
+
   const { data: src } = await db
     .from("daily_menu")
     .select("dish_id,price,available,sort_order")
     .eq("restaurant_id", session.restaurant_id)
     .eq("business_date", input.srcDate)
-    .eq("shift_id", input.srcShiftId);
+    .eq("shift_id", shiftId);
   if (!src || src.length === 0) return { error: "El menú base está vacío." };
 
   const rows = input.dates.flatMap((d) =>
     src.map((s) => ({
       restaurant_id: session.restaurant_id,
       business_date: d,
-      shift_id: input.targetShiftId,
+      shift_id: shiftId,
       dish_id: s.dish_id,
       price: s.price,
       available: s.available,
@@ -209,6 +213,6 @@ export async function copiarMenu(input: {
     `Copió el menú a ${input.dates.length} día(s)`,
     { dias: input.dates.length },
   );
-  revalidatePath(`/${session.slug}/menu`);
+  revalidateMenu(session.slug);
   return { ok: true, count: input.dates.length };
 }

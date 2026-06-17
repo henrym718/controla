@@ -67,35 +67,13 @@ export default async function HoyPage({
         />
       </div>
 
-      <Link
-        href={`/${restaurante}/menu`}
-        className="rounded-3xl border border-ink/10 p-4"
-      >
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold">Menú de hoy</span>
-          <span className="text-xs font-semibold text-blue">
-            {menuItems.length ? "Editar" : "Definir"}
-          </span>
-        </div>
-        {menuItems.length ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {menuItems.map((m, i) => {
-              const d = m.dishes as unknown as { name: string } | null;
-              return (
-                <span
-                  key={i}
-                  className="rounded-full bg-sand px-3 py-1 text-xs font-medium"
-                >
-                  {d?.name} ${Number(m.price).toFixed(2)}
-                </span>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="mt-1 text-xs opacity-50">
-            Aún no defines el menú de este turno. Tócalo o dilo por voz.
-          </p>
-        )}
+      <Link href={`/${restaurante}/menu`} className="rounded-3xl bg-sand p-5">
+        <span className="block text-lg font-bold leading-tight">Ver menú del día</span>
+        <span className="mt-0.5 block text-sm opacity-60">
+          {menuItems.length
+            ? `${menuItems.length} ${menuItems.length === 1 ? "plato disponible" : "platos disponibles"}`
+            : "Sin definir aún · tócalo para armarlo"}
+        </span>
       </Link>
 
       <Link

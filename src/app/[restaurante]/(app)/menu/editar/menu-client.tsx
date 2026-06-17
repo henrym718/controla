@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { PageTitle } from "@/components/ui";
 import { parseLocal, eachDate } from "@/lib/range";
@@ -10,29 +11,22 @@ import {
   quitarDelMenu,
   toggleAgotado,
   copiarMenu,
-} from "./actions";
+} from "../actions";
 
 interface DishRow {
   id: string;
   name: string;
   catalogPrice: number;
   inMenu: boolean;
-  /** Viene del turno "Todo el día": se vende en todos los turnos (solo lectura aquí). */
-  inheritedFromAllDay: boolean;
   price: number;
   available: boolean;
-  kind: "plato" | "combo" | "extra";
+  kind: "plato" | "combo";
 }
 
 const KIND_TAG: Record<DishRow["kind"], { label: string; cls: string } | null> = {
   plato: null,
   combo: { label: "combo", cls: "bg-mint" },
-  extra: { label: "adicional", cls: "bg-peach" },
 };
-interface ShiftOpt {
-  id: string;
-  name: string;
-}
 
 const MESES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -57,23 +51,16 @@ export default function MenuClient({
   isAdmin,
   today,
   date,
-  shiftId,
-  shiftName,
-  isAllDayShift,
-  shifts,
   dishes,
 }: {
   isAdmin: boolean;
   today: string;
   date: string;
-  shiftId: string;
-  shiftName: string;
-  isAllDayShift: boolean;
-  shifts: ShiftOpt[];
   dishes: DishRow[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const boardPath = pathname.replace(/\/editar$/, ""); // .../menu
   const [showCopy, setShowCopy] = useState(false);
   const [bulkPending, startBulk] = useTransition();
 
@@ -81,78 +68,38 @@ export default function MenuClient({
     const payload = items.map((d) => ({ dishId: d.id, price: d.catalogPrice }));
     if (payload.length === 0) return;
     startBulk(async () => {
-      await agregarVariosAlMenu({ items: payload, date, shiftId });
+      await agregarVariosAlMenu({ items: payload, date });
       router.refresh();
     });
   };
 
-  const go = (d: string, s: string) =>
-    router.push(`${pathname}?date=${d}&shift=${s}`);
+  const go = (d: string) => router.push(`${pathname}?date=${d}`);
   const stepDay = (delta: number) => {
     const d = parseLocal(date);
     d.setDate(d.getDate() + delta);
-    go(ymd(d), shiftId);
+    go(ymd(d));
   };
 
-  const propios = dishes.filter((d) => d.inMenu);
-  const heredados = dishes.filter((d) => d.inheritedFromAllDay);
-  // Lo de este turno primero; lo heredado de "Todo el día" abajo (solo lectura).
-  const enMenu = [...propios, ...heredados];
-  const fuera = dishes.filter((d) => !d.inMenu && !d.inheritedFromAllDay);
+  const enMenu = dishes.filter((d) => d.inMenu);
+  const fuera = dishes.filter((d) => !d.inMenu);
 
   return (
     <div className="flex flex-col gap-4">
-      <PageTitle title="Menú" />
+      <div className="flex items-center justify-between gap-2">
+        <PageTitle title="Editar menú" />
+        <Link
+          href={`${boardPath}?date=${date}`}
+          className="shrink-0 rounded-full border border-ink/15 px-4 py-1.5 text-sm font-semibold"
+        >
+          Ver menú
+        </Link>
+      </div>
 
-      {isAdmin ? (
-        <>
-          <div className="flex flex-wrap gap-2">
-            {shifts.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => go(date, s.id)}
-                className={`rounded-full px-4 py-1.5 text-sm font-semibold ${
-                  s.id === shiftId ? "bg-ink text-white" : "border border-ink/15"
-                }`}
-              >
-                {s.name}
-              </button>
-            ))}
-          </div>
-          <DateStepper
-            date={date}
-            today={today}
-            onStep={stepDay}
-            onPick={(d) => go(d, shiftId)}
-          />
-        </>
-      ) : (
-        <p className="text-sm font-semibold">Menú de hoy · {shiftName}</p>
+      {isAdmin && (
+        <DateStepper date={date} today={today} onStep={stepDay} />
       )}
 
-      <p className="text-sm opacity-60">
-        Elige qué platos y combos se venden {isAdmin ? "ese día en ese turno" : "hoy en este turno"}.
-        El precio sale del catálogo. Los adicionales y bebidas aparecen siempre en la venta.
-      </p>
-
-      {isAllDayShift ? (
-        <p className="rounded-2xl bg-mint px-4 py-3 text-sm">
-          <span className="font-semibold">Todo el día.</span> Lo que pongas aquí se
-          vende en <span className="font-semibold">todos los turnos</span> del día.
-        </p>
-      ) : (
-        heredados.length > 0 && (
-          <p className="rounded-2xl bg-lav px-4 py-3 text-sm">
-            Los platos marcados{" "}
-            <span className="rounded-full bg-ink/10 px-2 py-0.5 text-[10px] font-semibold">
-              Todo el día
-            </span>{" "}
-            se venden en todos los turnos. Para cambiarlos, ve al turno “Todo el día”.
-          </p>
-        )
-      )}
-
-      {isAdmin && propios.length > 0 && (
+      {isAdmin && enMenu.length > 0 && (
         <button
           onClick={() => setShowCopy((v) => !v)}
           className="self-start rounded-full border border-ink/15 px-4 py-1.5 text-sm font-semibold"
@@ -163,9 +110,6 @@ export default function MenuClient({
       {showCopy && (
         <CopyPanel
           date={date}
-          shiftId={shiftId}
-          shiftName={shiftName}
-          shifts={shifts}
           onDone={() => {
             setShowCopy(false);
             router.refresh();
@@ -177,7 +121,7 @@ export default function MenuClient({
         <div className="flex flex-col gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide opacity-50">En el menú</p>
           {enMenu.map((d) => (
-            <Row key={d.id} dish={d} date={date} shiftId={shiftId} />
+            <Row key={d.id} dish={d} date={date} />
           ))}
         </div>
       )}
@@ -206,7 +150,7 @@ export default function MenuClient({
                 )}
               </div>
               {g.items.map((d) => (
-                <Row key={d.id} dish={d} date={date} shiftId={shiftId} />
+                <Row key={d.id} dish={d} date={date} />
               ))}
             </div>
           ),
@@ -223,12 +167,10 @@ function DateStepper({
   date,
   today,
   onStep,
-  onPick,
 }: {
   date: string;
   today: string;
   onStep: (delta: number) => void;
-  onPick: (date: string) => void;
 }) {
   return (
     <div className="flex items-center justify-center gap-2">
@@ -248,25 +190,11 @@ function DateStepper({
       >
         ›
       </button>
-      <input
-        type="date"
-        value={date}
-        onChange={(e) => e.target.value && onPick(e.target.value)}
-        className={inputCls}
-      />
     </div>
   );
 }
 
-function Row({
-  dish,
-  date,
-  shiftId,
-}: {
-  dish: DishRow;
-  date: string;
-  shiftId: string;
-}) {
+function Row({ dish, date }: { dish: DishRow; date: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
 
@@ -279,7 +207,7 @@ function Row({
   return (
     <div
       className={`flex items-center gap-2 rounded-2xl border px-3 py-2.5 ${
-        (dish.inMenu || dish.inheritedFromAllDay) && !dish.available
+        dish.inMenu && !dish.available
           ? "border-ink/10 bg-ink/[0.03] opacity-60"
           : "border-ink/10"
       }`}
@@ -293,20 +221,13 @@ function Row({
             {KIND_TAG[dish.kind]!.label}
           </span>
         )}
-        {dish.inheritedFromAllDay && (
-          <span className="rounded-full bg-ink/10 px-2 py-0.5 text-[10px] font-semibold">
-            Todo el día
-          </span>
-        )}
       </span>
       <span className="text-sm font-semibold opacity-50">{money(dish.catalogPrice)}</span>
-      {dish.inheritedFromAllDay ? (
-        <span className="text-xs opacity-50">se vende todo el día</span>
-      ) : dish.inMenu ? (
+      {dish.inMenu ? (
         <>
           <button
             onClick={() =>
-              run(() => toggleAgotado({ dishId: dish.id, available: !dish.available, date, shiftId }))
+              run(() => toggleAgotado({ dishId: dish.id, available: !dish.available, date }))
             }
             disabled={pending}
             className="rounded-full border border-ink/15 px-3 py-1.5 text-xs font-semibold"
@@ -314,7 +235,7 @@ function Row({
             {dish.available ? "Agotado" : "Disponible"}
           </button>
           <button
-            onClick={() => run(() => quitarDelMenu({ dishId: dish.id, date, shiftId }))}
+            onClick={() => run(() => quitarDelMenu({ dishId: dish.id, date }))}
             disabled={pending}
             className="rounded-full border border-coral/40 px-3 py-1.5 text-xs font-semibold text-coral"
           >
@@ -323,7 +244,7 @@ function Row({
         </>
       ) : (
         <button
-          onClick={() => run(() => agregarAlMenu({ dishId: dish.id, price: dish.catalogPrice, date, shiftId }))}
+          onClick={() => run(() => agregarAlMenu({ dishId: dish.id, price: dish.catalogPrice, date }))}
           disabled={pending}
           className="rounded-full bg-ink px-4 py-1.5 text-xs font-semibold text-white"
         >
@@ -334,22 +255,9 @@ function Row({
   );
 }
 
-function CopyPanel({
-  date,
-  shiftId,
-  shiftName,
-  shifts,
-  onDone,
-}: {
-  date: string;
-  shiftId: string;
-  shiftName: string;
-  shifts: ShiftOpt[];
-  onDone: () => void;
-}) {
+function CopyPanel({ date, onDone }: { date: string; onDone: () => void }) {
   const [from, setFrom] = useState(date);
   const [to, setTo] = useState(date);
-  const [targetShift, setTargetShift] = useState(shiftId);
   const [wds, setWds] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -365,12 +273,7 @@ function CopyPanel({
     if (dates.length === 0)
       return setMsg("Ese rango no tiene días seleccionados (revisa fechas y días).");
     start(async () => {
-      const r = await copiarMenu({
-        srcDate: date,
-        srcShiftId: shiftId,
-        targetShiftId: targetShift,
-        dates,
-      });
+      const r = await copiarMenu({ srcDate: date, dates });
       if (r.error) setMsg(r.error);
       else {
         setMsg(`✅ Copiado a ${r.count} día(s).`);
@@ -381,9 +284,7 @@ function CopyPanel({
 
   return (
     <div className="flex flex-col gap-3 rounded-3xl border border-ink/10 bg-ink/[0.02] p-4">
-      <p className="text-sm font-semibold">
-        Copiar el menú de “{date} · {shiftName}” a:
-      </p>
+      <p className="text-sm font-semibold">Copiar el menú de “{date}” a:</p>
       <div className="flex items-center gap-2 text-sm">
         <span className="opacity-60">Desde</span>
         <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
@@ -403,20 +304,6 @@ function CopyPanel({
           </button>
         ))}
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <span className="opacity-60">Turno destino</span>
-        <select
-          value={targetShift}
-          onChange={(e) => setTargetShift(e.target.value)}
-          className={inputCls}
-        >
-          {shifts.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
       <div className="flex items-center gap-2">
         <button
           onClick={submit}

@@ -938,7 +938,7 @@ function EmptyMenu({ slug }: { slug: string }) {
         Define qué platos se venden hoy y vuelve aquí para registrar ventas con un toque.
       </p>
       <Link
-        href={`/${slug}/menu`}
+        href={`/${slug}/menu/editar`}
         className="mt-4 inline-flex rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white"
       >
         Ir al menú
