@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, PageTitle } from "@/components/ui";
-import { registrarConteoAction, registrarMermaInsumosAction } from "../admin/actions";
+import { registrarMermaInsumosAction } from "../admin/actions";
 import { cerrarDiaAction } from "../../actions";
 import type { DaySummary } from "@/lib/reports";
-import type { ConteoEstado } from "../conteo/conteo-client";
 
 export interface WizardTurno {
   shift: string;
@@ -16,11 +15,6 @@ export interface WizardTurno {
   esperada: number;
   contada: number | null;
   descuadre: number | null;
-}
-interface Pool {
-  ingredientId: string;
-  name: string;
-  poolCost: number;
 }
 interface Producto {
   id: string;
@@ -31,23 +25,14 @@ interface Producto {
 }
 
 const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
-const qtyStr = (n: number | null) => (n == null ? "—" : String(Number(n)));
 
-const STEPS = ["Turnos", "Conteo", "Merma", "Dañados", "Cerrar"];
-const MERMA_PRESETS = [
-  { label: "Nada", pct: 0 },
-  { label: "Poco", pct: 10 },
-  { label: "Un cuarto", pct: 25 },
-  { label: "La mitad", pct: 50 },
-];
+const STEPS = ["Turnos", "Dañados", "Cerrar"];
 
 export default function CierreDiaWizard({
   slug,
   date,
   closed,
   turnos,
-  conteo,
-  pools,
   productos,
   summary,
 }: {
@@ -55,85 +40,37 @@ export default function CierreDiaWizard({
   date: string;
   closed: boolean;
   turnos: WizardTurno[];
-  conteo: ConteoEstado;
-  pools: Pool[];
   productos: Producto[];
   summary: DaySummary;
 }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [counts, setCounts] = useState<Record<string, string>>({});
-  const [conteoDone, setConteoDone] = useState(conteo.locked);
-  const [conteoMsg, setConteoMsg] = useState<string | null>(null);
-  const [merma, setMerma] = useState<Record<string, number>>({});
-  const [custom, setCustom] = useState<Record<string, string>>({});
-  const [mermaQty, setMermaQty] = useState<Record<string, string>>({});
-  const [mermaReason, setMermaReason] = useState("");
-  const [mermaQuery, setMermaQuery] = useState("");
+  const [danadoQty, setDanadoQty] = useState<Record<string, string>>({});
+  const [danadoReason, setDanadoReason] = useState("");
+  const [danadoQuery, setDanadoQuery] = useState("");
   const [closeMsg, setCloseMsg] = useState<string | null>(null);
-  const [pendingConteo, startConteo] = useTransition();
   const [pendingClose, startClose] = useTransition();
 
   const turnosAbiertos = turnos.filter((t) => t.status !== "closed").length;
-  const costos =
-    summary.insumos.total + summary.productos.total + summary.gastos.total + summary.fijos.total;
-  const mermaPreview = pools.reduce(
-    (s, p) => s + p.poolCost * ((merma[p.ingredientId] ?? 0) / 100),
-    0,
-  );
   const danadosTotal = productos.reduce(
-    (s, p) => s + (Number(mermaQty[p.id]) || 0) * p.cost,
+    (s, p) => s + (Number(danadoQty[p.id]) || 0) * p.cost,
     0,
   );
-  const q = mermaQuery.trim().toLowerCase();
+  const q = danadoQuery.trim().toLowerCase();
   const productosFiltrados = q
     ? productos.filter((p) => p.name.toLowerCase().includes(q))
     : productos;
 
-  const faltante = useMemo(() => {
-    if (conteo.locked) {
-      return conteo.items.reduce(
-        (s, i) => s + (i.diff != null && i.diff < 0 ? Math.abs(Number(i.diff_cost)) : 0),
-        0,
-      );
-    }
-    return conteo.items.reduce((s, i) => {
-      const raw = counts[i.ingredient_id];
-      if (raw === undefined || raw === "") return s;
-      const d = (Number(raw) || 0) - Number(i.expected);
-      return s + (d < 0 ? Math.abs(d) * Number(i.unit_cost) : 0);
-    }, 0);
-  }, [conteo, counts]);
-
   const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
   const back = () => setStep((s) => Math.max(0, s - 1));
 
-  function guardarConteo() {
-    setConteoMsg(null);
-    const payload = conteo.items.map((i) => {
-      const raw = counts[i.ingredient_id];
-      const countedQty = raw === undefined || raw === "" ? Number(i.expected) : Number(raw) || 0;
-      return { ingredientId: i.ingredient_id, countedQty };
-    });
-    startConteo(async () => {
-      const r = await registrarConteoAction(date, payload);
-      if (r.error) setConteoMsg(r.error);
-      else {
-        setConteoDone(true);
-        next();
-      }
-    });
-  }
-
   function cerrarDia() {
     setCloseMsg(null);
-    const map: Record<string, number> = {};
-    for (const p of pools) map[p.ingredientId] = merma[p.ingredientId] ?? 0;
     const danados = productos
       .map((p) => ({
         ingredientId: p.id,
-        qty: Number(mermaQty[p.id]) || 0,
-        reason: mermaReason.trim() || null,
+        qty: Number(danadoQty[p.id]) || 0,
+        reason: danadoReason.trim() || null,
       }))
       .filter((x) => x.qty > 0);
     startClose(async () => {
@@ -145,7 +82,9 @@ export default function CierreDiaWizard({
           return;
         }
       }
-      const r = await cerrarDiaAction(map);
+      // El granel ya no declara merma manual: se cierra sin merma, así todo el
+      // pool cocinado se reparte entre los platos que sí se vendieron.
+      const r = await cerrarDiaAction({});
       if (r?.error) setCloseMsg(r.error);
       else router.refresh();
     });
@@ -160,7 +99,7 @@ export default function CierreDiaWizard({
           <p className="text-sm opacity-70">Utilidad del día</p>
           <p className="text-3xl font-bold">{money(summary.utilidad)}</p>
         </div>
-        <ResumenNumeros summary={summary} costos={costos} faltante={faltante} />
+        <ResumenNumeros summary={summary} />
         <Link
           href={`/${slug}/resumen`}
           className="rounded-full bg-ink px-5 py-3 text-center text-sm font-semibold text-white"
@@ -176,7 +115,7 @@ export default function CierreDiaWizard({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageTitle title="Cerrar el día" subtitle="Conteo, merma y costos en un solo flujo" />
+      <PageTitle title="Cerrar el día" subtitle="Revisa los turnos y los daños, y cuadra el día" />
       <Stepper step={step} onPick={setStep} />
 
       {/* ---------- PASO 1 · TURNOS ---------- */}
@@ -230,185 +169,8 @@ export default function CierreDiaWizard({
         </div>
       )}
 
-      {/* ---------- PASO 2 · CONTEO ---------- */}
+      {/* ---------- PASO 2 · DAÑADOS ---------- */}
       {step === 1 && (
-        <div className="flex flex-col gap-3">
-          <p className="text-sm opacity-70">
-            Auditoría anti-robo, <b>opcional</b>. No toca los costos ni el pool: solo cuentas el
-            stock físico que se puede contar (aguas, colas, carnes, presas). Si cuentas <b>menos</b>{" "}
-            de lo que el sistema esperaba, esa diferencia es plata perdida. Si no quieres auditar,
-            toca «Saltar».
-          </p>
-          <div className={`rounded-3xl p-4 text-white ${faltante > 0.005 ? "bg-coral" : "bg-ink"}`}>
-            <p className="text-xs text-white/70">
-              {conteoDone ? "Faltante registrado" : "Faltante en curso"}
-            </p>
-            <p className="text-2xl font-bold">{money(faltante)}</p>
-          </div>
-
-          {conteo.items.length === 0 ? (
-            <p className="rounded-2xl bg-ink/[0.03] p-4 text-sm opacity-60">
-              No hay productos contables que contar.
-            </p>
-          ) : conteoDone ? (
-            <Card className="p-0">
-              {conteo.items.map((i) => {
-                const d = Number(i.diff ?? 0);
-                const cuadra = Math.abs(d) < 0.0001;
-                return (
-                  <div
-                    key={i.ingredient_id}
-                    className="flex items-center border-t border-ink/5 px-4 py-2 text-sm first:border-0"
-                  >
-                    <span className="flex-1 font-medium">{i.name}</span>
-                    <span className="w-16 text-right opacity-60">{qtyStr(i.expected)}</span>
-                    <span className="w-16 text-right">{qtyStr(i.counted)}</span>
-                    <span
-                      className={`w-16 text-right font-semibold ${
-                        cuadra ? "opacity-40" : d < 0 ? "text-coral" : "text-teal"
-                      }`}
-                    >
-                      {cuadra ? "—" : `${d > 0 ? "+" : ""}${d}`}
-                    </span>
-                  </div>
-                );
-              })}
-            </Card>
-          ) : (
-            <Card className="p-0">
-              <div className="flex bg-ink/5 px-4 py-2 text-xs font-semibold opacity-60">
-                <span className="flex-1">Producto</span>
-                <span className="w-20 text-right">Debería</span>
-                <span className="w-24 text-right">Contado</span>
-              </div>
-              {conteo.items.map((i) => {
-                const raw = counts[i.ingredient_id] ?? "";
-                const d = raw === "" ? null : (Number(raw) || 0) - Number(i.expected);
-                return (
-                  <div
-                    key={i.ingredient_id}
-                    className="flex items-center border-t border-ink/5 px-4 py-2 text-sm"
-                  >
-                    <span className="flex-1 font-medium">
-                      {i.name}
-                      {d != null && d !== 0 && (
-                        <span
-                          className={`ml-2 text-[11px] font-semibold ${
-                            d < 0 ? "text-coral" : "text-teal"
-                          }`}
-                        >
-                          {d > 0 ? `+${d}` : d}
-                        </span>
-                      )}
-                    </span>
-                    <span className="w-20 text-right opacity-60">{qtyStr(i.expected)}</span>
-                    <input
-                      inputMode="decimal"
-                      value={raw}
-                      onChange={(e) =>
-                        setCounts((c) => ({ ...c, [i.ingredient_id]: e.target.value }))
-                      }
-                      placeholder={qtyStr(i.expected)}
-                      className="ml-2 w-20 rounded-xl border border-ink/15 px-2 py-1.5 text-right text-sm outline-none focus:border-ink/40"
-                    />
-                  </div>
-                );
-              })}
-            </Card>
-          )}
-          {conteoDone && <p className="text-center text-xs text-teal">✓ Conteo guardado.</p>}
-          {conteoMsg && <p className="text-center text-sm text-coral">{conteoMsg}</p>}
-        </div>
-      )}
-
-      {/* ---------- PASO 3 · MERMA ---------- */}
-      {step === 2 && (
-        <div className="flex flex-col gap-3">
-          <p className="text-sm opacity-70">
-            De lo que cocinaste a granel, ¿cuánto <b>sobró y se botó</b>? Eso es pérdida; el resto se
-            reparte entre los platos vendidos. Si no sobró nada, déjalo en «Nada».
-          </p>
-          {pools.length === 0 && (
-            <p className="rounded-2xl bg-ink/[0.03] p-4 text-sm opacity-60">
-              No hubo producción a granel hoy.
-            </p>
-          )}
-          {pools.map((p) => {
-            const cur = merma[p.ingredientId] ?? 0;
-            const perdido = p.poolCost * (cur / 100);
-            const reparte = p.poolCost - perdido;
-            const showCustom = custom[p.ingredientId] != null;
-            return (
-              <Card key={p.ingredientId} className="flex flex-col gap-3">
-                <div className="flex items-baseline justify-between">
-                  <span className="font-semibold">{p.name}</span>
-                  <span className="text-xs opacity-60">preparaste {money(p.poolCost)}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {MERMA_PRESETS.map((opt) => {
-                    const active = !showCustom && cur === opt.pct;
-                    const tone = opt.pct === 0 ? "bg-mint" : "bg-ink text-white";
-                    return (
-                      <button
-                        key={opt.pct}
-                        onClick={() => {
-                          setMerma((m) => ({ ...m, [p.ingredientId]: opt.pct }));
-                          setCustom((c) => {
-                            const n = { ...c };
-                            delete n[p.ingredientId];
-                            return n;
-                          });
-                        }}
-                        className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
-                          active ? tone : "border border-ink/15"
-                        }`}
-                      >
-                        {opt.label}
-                        {opt.pct > 0 ? ` · ${opt.pct}%` : ""}
-                      </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => setCustom((c) => ({ ...c, [p.ingredientId]: String(cur) }))}
-                    className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
-                      showCustom ? "bg-ink text-white" : "border border-ink/15"
-                    }`}
-                  >
-                    Otro
-                  </button>
-                </div>
-                {showCustom && (
-                  <label className="flex items-center gap-2 text-sm">
-                    Sobró
-                    <input
-                      inputMode="decimal"
-                      value={custom[p.ingredientId]}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setCustom((c) => ({ ...c, [p.ingredientId]: v }));
-                        setMerma((m) => ({
-                          ...m,
-                          [p.ingredientId]: Math.min(100, Math.max(0, Number(v) || 0)),
-                        }));
-                      }}
-                      placeholder="0"
-                      className="w-20 rounded-xl border border-ink/15 px-2 py-1 text-right outline-none focus:border-ink/40"
-                    />
-                    %
-                  </label>
-                )}
-                <p className="text-xs opacity-70">
-                  {cur > 0 ? `Se pierde ${money(perdido)}. ` : "No se pierde nada. "}
-                  Se reparte {money(reparte)} entre los platos vendidos.
-                </p>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ---------- PASO 4 · DAÑADOS / MERMA POR PRODUCTO ---------- */}
-      {step === 3 && (
         <div className="flex flex-col gap-3">
           <p className="text-sm opacity-70">
             ¿Algún producto se <b>dañó o se perdió</b> hoy y ya no sirve (un tomate podrido, una
@@ -416,8 +178,8 @@ export default function CierreDiaWizard({
             <b>merma</b>. Es por producto, no por plato. Lo vendido ya se descontó solo.
           </p>
           <input
-            value={mermaQuery}
-            onChange={(e) => setMermaQuery(e.target.value)}
+            value={danadoQuery}
+            onChange={(e) => setDanadoQuery(e.target.value)}
             placeholder="Buscar producto…"
             className="w-full rounded-xl border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40"
           />
@@ -434,7 +196,7 @@ export default function CierreDiaWizard({
           ) : (
             <Card className="max-h-[22rem] overflow-y-auto p-0">
               {productosFiltrados.map((p) => {
-                const v = mermaQty[p.id] ?? "";
+                const v = danadoQty[p.id] ?? "";
                 const active = Number(v) > 0;
                 return (
                   <div
@@ -453,7 +215,7 @@ export default function CierreDiaWizard({
                       inputMode="decimal"
                       value={v}
                       onChange={(e) =>
-                        setMermaQty((m) => ({
+                        setDanadoQty((m) => ({
                           ...m,
                           [p.id]: e.target.value.replace(/[^\d.]/g, ""),
                         }))
@@ -467,27 +229,22 @@ export default function CierreDiaWizard({
             </Card>
           )}
           <input
-            value={mermaReason}
-            onChange={(e) => setMermaReason(e.target.value)}
+            value={danadoReason}
+            onChange={(e) => setDanadoReason(e.target.value)}
             placeholder="Motivo (opcional): se dañó, se pudrió…"
             className="w-full rounded-xl border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40"
           />
         </div>
       )}
 
-      {/* ---------- PASO 5 · CERRAR ---------- */}
-      {step === 4 && (
+      {/* ---------- PASO 3 · CERRAR ---------- */}
+      {step === 2 && (
         <div className="flex flex-col gap-3">
           <p className="text-sm opacity-70">
-            Revisa el resumen y cierra el día. Esto calcula el costo real de cada plato y guarda el
+            Revisa el cuadre del día y ciérralo. Esto calcula el costo real de cada plato y guarda el
             historial.
           </p>
-          <ResumenNumeros summary={summary} costos={costos} faltante={faltante} />
-          {mermaPreview > 0 && (
-            <p className="text-center text-xs opacity-60">
-              Merma declarada: se perderán {money(mermaPreview)} de lo cocinado a granel.
-            </p>
-          )}
+          <ResumenNumeros summary={summary} />
           {danadosTotal > 0 && (
             <p className="text-center text-xs opacity-60">
               Productos dañados: se darán de baja {money(danadosTotal)} como merma.
@@ -503,25 +260,11 @@ export default function CierreDiaWizard({
       {/* ---------- NAVEGACIÓN ---------- */}
       <div className="flex items-center gap-2">
         {step > 0 && (
-          <Button variant="outline" onClick={back} disabled={pendingConteo || pendingClose}>
+          <Button variant="outline" onClick={back} disabled={pendingClose}>
             ← Atrás
           </Button>
         )}
-        {step === 1 && !conteoDone && conteo.items.length > 0 ? (
-          <>
-            <Button onClick={guardarConteo} disabled={pendingConteo}>
-              {pendingConteo ? "Guardando…" : "Guardar conteo y seguir"}
-            </Button>
-            <button
-              onClick={next}
-              className="shrink-0 px-3 text-sm font-medium opacity-50 underline"
-            >
-              Saltar
-            </button>
-          </>
-        ) : step < STEPS.length - 1 ? (
-          <Button onClick={next}>Siguiente →</Button>
-        ) : null}
+        {step < STEPS.length - 1 && <Button onClick={next}>Siguiente →</Button>}
       </div>
     </div>
   );
@@ -552,39 +295,58 @@ function Stepper({ step, onPick }: { step: number; onPick: (s: number) => void }
   );
 }
 
-function ResumenNumeros({
-  summary,
-  costos,
-  faltante,
-}: {
-  summary: DaySummary;
-  costos: number;
-  faltante: number;
-}) {
+// Cuadre del día como un mini estado de resultados: ventas − costo de lo vendido
+// = ganancia bruta; menos gastos y fijos = utilidad. Así se ve claro qué se
+// resta y cuánto margen deja el día.
+function ResumenNumeros({ summary }: { summary: DaySummary }) {
+  const costoVendido = summary.insumos.total + summary.productos.total;
+  const bruto = summary.ventas - costoVendido;
+  const margenPct = summary.ventas > 0 ? (bruto / summary.ventas) * 100 : 0;
   return (
     <Card className="p-4">
-      <Linea label="Ventas" value={summary.ventas} strong />
-      <Linea label="Insumos cocinados" value={-summary.insumos.total} />
-      <Linea label="Productos vendidos" value={-summary.productos.total} />
-      <Linea label="Gastos" value={-summary.gastos.total} />
-      <Linea label="Costos fijos (día)" value={-summary.fijos.total} />
-      <div className="mt-1 flex items-center justify-between border-t border-ink/10 pt-2">
+      <Linea label="Ventas del día" value={summary.ventas} strong />
+
+      <p className="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-wide opacity-40">
+        Costo de lo vendido
+      </p>
+      <Linea label="Insumos cocinados" value={-summary.insumos.total} sub />
+      <Linea label="Productos vendidos" value={-summary.productos.total} sub />
+      <div className="mt-1 flex items-center justify-between border-t border-ink/10 pt-1.5">
+        <span className="text-sm font-medium">Ganancia bruta</span>
+        <span className="text-sm font-semibold">
+          {money(bruto)} <span className="text-xs opacity-50">· {margenPct.toFixed(0)}%</span>
+        </span>
+      </div>
+
+      <p className="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-wide opacity-40">
+        Gastos del día
+      </p>
+      <Linea label="Gastos (servicios, consumibles)" value={-summary.gastos.total} sub />
+      <Linea label="Costos fijos (prorrateo)" value={-summary.fijos.total} sub />
+
+      <div className="mt-2 flex items-center justify-between border-t border-ink/10 pt-2">
         <span className="text-sm font-semibold">Utilidad del día</span>
         <span className="text-lg font-bold">{money(summary.utilidad)}</span>
       </div>
-      {faltante > 0.005 && (
-        <p className="mt-2 text-xs text-coral">Faltante en conteo: {money(faltante)}</p>
-      )}
-      <p className="mt-1 text-[11px] opacity-50">Costos totales del día: {money(costos)}</p>
     </Card>
   );
 }
 
-function Linea({ label, value, strong }: { label: string; value: number; strong?: boolean }) {
+function Linea({
+  label,
+  value,
+  strong,
+  sub,
+}: {
+  label: string;
+  value: number;
+  strong?: boolean;
+  sub?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between py-1 text-sm">
-      <span className="opacity-60">{label}</span>
-      <span className={strong ? "font-bold" : ""}>{money(value)}</span>
+      <span className={sub ? "pl-3 opacity-60" : "opacity-60"}>{label}</span>
+      <span className={strong ? "font-bold" : "tabular-nums"}>{money(value)}</span>
     </div>
   );
 }

@@ -77,25 +77,25 @@ export default function ComprasClient({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Buscar producto…"
-                  className="mb-3 w-full rounded-2xl border border-ink/15 bg-white px-4 py-2.5 text-sm outline-none focus:border-ink/40"
+                  className="mb-3 w-full rounded-2xl border border-ink/15 bg-white px-4 py-3 text-lg outline-none focus:border-ink/40"
                 />
               )}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2.5">
                 {filtered.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => setSel(p)}
-                    className="flex items-center gap-3 rounded-2xl border border-ink/10 bg-white px-4 py-3 text-left"
+                    className="flex items-center gap-3 rounded-2xl border border-ink/10 bg-white px-4 py-4 text-left"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold leading-tight break-words">{p.name}</p>
-                      <p className="mt-0.5 text-xs opacity-50">
+                      <p className="text-lg font-semibold leading-tight break-words">{p.name}</p>
+                      <p className="mt-1 text-base opacity-70">
                         quedan {p.stock}
                         {p.unit ? ` ${p.unit}` : ""}
                         {p.sellable ? " · de venta" : ""}
                       </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white">
+                    <span className="shrink-0 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
                       Comprar
                     </span>
                   </button>
