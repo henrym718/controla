@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { eachDate, parseLocal } from "@/lib/range";
-import { businessDate } from "@/lib/shifts";
+import { businessDate, businessTime } from "@/lib/shifts";
 
 type Db = SupabaseClient<Database>;
 
@@ -108,6 +108,71 @@ export async function computeDayReport(
   dishes.sort((a, b) => b.qty - a.qty);
 
   return { date, ventas, costoDia, margenDia: ventas - costoDia, mermaGranel, closed, dishes };
+}
+
+// ===========================================================================
+//  DETALLE DE VENTAS DE UN DÍA (línea de tiempo: qué, quién y a qué hora)
+//  Cada venta como un evento con su hora; abajo un conteo de platos por nombre.
+//  La hora es el dato clave: sirve para ver a qué horas se vende cada plato.
+// ===========================================================================
+export interface DaySaleEntry {
+  id: string;
+  hora: string; // hora de Ecuador, ej. "2:35 pm"
+  createdAt: string; // ISO, para ordenar
+  dishName: string;
+  qty: number;
+  total: number;
+  persona: string; // quién registró la venta
+  pago: string; // efectivo | credito | transferencia | otro
+}
+export interface DaySales {
+  date: string;
+  entries: DaySaleEntry[]; // ordenadas por hora (de la mañana a la noche)
+  resumen: { name: string; qty: number }[]; // platos agrupados por nombre, más vendidos primero
+  totalPlatos: number;
+  totalVentas: number;
+}
+
+export async function computeDaySales(
+  db: Db,
+  restaurantId: string,
+  date: string,
+): Promise<DaySales> {
+  const [{ data: sales }, { data: users }] = await Promise.all([
+    db
+      .from("sales")
+      .select("id,created_at,dish_name,qty,total,user_id,payment_method")
+      .eq("restaurant_id", restaurantId)
+      .eq("business_date", date)
+      .is("voided_at", null)
+      .eq("consumo_interno", false)
+      .order("created_at", { ascending: true }),
+    db.from("users").select("id,name").eq("restaurant_id", restaurantId),
+  ]);
+
+  const uname = new Map((users ?? []).map((u) => [u.id, u.name]));
+
+  const entries: DaySaleEntry[] = (sales ?? []).map((s) => ({
+    id: s.id,
+    hora: businessTime(new Date(s.created_at)),
+    createdAt: s.created_at,
+    dishName: s.dish_name ?? "—",
+    qty: Number(s.qty),
+    total: Number(s.total),
+    persona: s.user_id ? uname.get(s.user_id) ?? "—" : "—",
+    pago: s.payment_method,
+  }));
+
+  const resumenMap = new Map<string, number>();
+  for (const e of entries) resumenMap.set(e.dishName, (resumenMap.get(e.dishName) ?? 0) + e.qty);
+  const resumen = [...resumenMap.entries()]
+    .map(([name, qty]) => ({ name, qty }))
+    .sort((a, b) => b.qty - a.qty);
+
+  const totalPlatos = entries.reduce((s, e) => s + e.qty, 0);
+  const totalVentas = entries.reduce((s, e) => s + e.total, 0);
+
+  return { date, entries, resumen, totalPlatos, totalVentas };
 }
 
 // ===========================================================================

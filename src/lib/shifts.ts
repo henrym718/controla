@@ -52,3 +52,19 @@ export function businessDate(d = new Date()): string {
     day: "2-digit",
   }).format(d);
 }
+
+/**
+ * Hora de un instante EN LA ZONA DEL NEGOCIO (Ecuador), formato 12h limpio.
+ * Ej.: "2:35 pm". Se calcula en el servidor para que la hora sea siempre la de
+ * Ecuador, sin depender de la zona del navegador que la mira.
+ */
+export function businessTime(d: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(d)
+    .toLowerCase();
+}

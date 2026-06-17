@@ -26,6 +26,7 @@ export default async function AdminPage({
     {
       title: "Análisis",
       items: [
+        { href: `${base}/ventas-dia`, label: "Ventas del día (por hora)", tone: "bg-mint" },
         { href: `${base}/balance`, label: "Estado de resultados (mes)", tone: "bg-lav" },
         { href: `${base}/analitica`, label: "Analítica y control", tone: "bg-mint" },
         { href: `${base}/costos-fijos`, label: "Costos fijos", tone: "bg-peach" },
