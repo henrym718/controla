@@ -18,7 +18,7 @@ export default async function CostosFijosPage({
   const db = createAdminClient();
   const { data: costs } = await db
     .from("recurring_costs")
-    .select("id,name,amount,category,schedule_type,effective_from")
+    .select("id,name,amount,category,schedule_type,weekdays,effective_from")
     .eq("restaurant_id", session.restaurant_id)
     .eq("active", true)
     .order("category");
@@ -34,6 +34,7 @@ export default async function CostosFijosPage({
           amount: Number(c.amount),
           category: c.category,
           scheduleType: c.schedule_type,
+          weekdays: (c.weekdays as number[] | null) ?? [],
           effectiveFrom: c.effective_from,
         }))}
       />

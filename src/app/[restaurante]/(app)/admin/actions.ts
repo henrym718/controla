@@ -244,11 +244,21 @@ export async function eliminarTurno(id: string): Promise<ActionResult> {
 }
 
 // ---------------------------------------------------------------- Costos fijos
+// Días de la semana (0=domingo … 6=sábado) válidos y deduplicados; solo
+// aplican cuando el costo es semanal. Si no se eligió ninguno → null (el costo
+// semanal se prorratea a la semana entera).
+function normWeekdays(scheduleType: string, weekdays?: number[] | null): number[] | null {
+  if (scheduleType !== "weekly") return null;
+  const wds = [...new Set((weekdays ?? []).filter((w) => Number.isInteger(w) && w >= 0 && w <= 6))];
+  return wds.length ? wds.sort((a, b) => a - b) : null;
+}
+
 export async function crearCosto(input: {
   name: string;
   amount: number;
   category: string;
   scheduleType: string;
+  weekdays?: number[] | null;
   dayOfMonth?: number | null;
   effectiveFrom?: string;
 }): Promise<ActionResult> {
@@ -263,6 +273,7 @@ export async function crearCosto(input: {
     amount: input.amount,
     category: input.category,
     schedule_type: input.scheduleType,
+    weekdays: normWeekdays(input.scheduleType, input.weekdays),
     day_of_month: input.dayOfMonth || null,
     effective_from: effectiveFrom,
   });
@@ -272,6 +283,43 @@ export async function crearCosto(input: {
     db,
     "costo_fijo",
     `Agregó el costo fijo ${input.name} (${money(input.amount)})`,
+    { name: input.name, amount: input.amount },
+  );
+  revalidatePath(`/${session.slug}/costos-fijos`);
+  return { ok: true };
+}
+
+export async function editarCosto(input: {
+  id: string;
+  name: string;
+  amount: number;
+  category: string;
+  scheduleType: string;
+  weekdays?: number[] | null;
+  effectiveFrom?: string;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  // Editar es en sitio: el resumen/analítica se calculan en vivo, así que un
+  // cambio se refleja en todos los reportes (no es común tocar un costo fijo).
+  const editaVigencia = /^\d{4}-\d{2}-\d{2}$/.test(input.effectiveFrom ?? "");
+  const { error } = await db
+    .from("recurring_costs")
+    .update({
+      name: input.name,
+      amount: input.amount,
+      category: input.category,
+      schedule_type: input.scheduleType,
+      weekdays: normWeekdays(input.scheduleType, input.weekdays),
+      ...(editaVigencia ? { effective_from: input.effectiveFrom! } : {}),
+    })
+    .eq("id", input.id)
+    .eq("restaurant_id", session.restaurant_id);
+  if (error) return { error: error.message };
+  await logAdmin(
+    session,
+    db,
+    "costo_fijo",
+    `Editó el costo fijo ${input.name} (${money(input.amount)})`,
     { name: input.name, amount: input.amount },
   );
   revalidatePath(`/${session.slug}/costos-fijos`);

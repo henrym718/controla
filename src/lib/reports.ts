@@ -220,8 +220,11 @@ export async function computeDaySummary(
     let monto = 0;
     if (c.schedule_type === "daily") monto = amount;
     else if (c.schedule_type === "weekly") {
+      // Semanal: el monto es el total de la semana. Si se eligieron días, se
+      // reparte SOLO entre esos días (amount / nº días) y los demás no cargan
+      // nada; sin días, se prorratea a la semana entera (amount / 7).
       const wds = (c.weekdays as number[] | null) ?? [];
-      monto = wds.length ? (wds.includes(wd) ? amount : 0) : amount / 7;
+      monto = wds.length ? (wds.includes(wd) ? amount / wds.length : 0) : amount / 7;
     } else monto = amount / dim;
     if (c.category === "administrativo") fijos.administrativo += monto;
     else if (c.category === "financiero") fijos.financiero += monto;
@@ -473,7 +476,9 @@ export async function computeAnalytics(
     if (c.schedule_type === "daily") fijos += amount * dates.length;
     else if (c.schedule_type === "weekly") {
       const wd = (c.weekdays as number[] | null) ?? [];
-      fijos += wd.length ? amount * dates.filter((d) => wd.includes(d.getDay())).length : amount * (dates.length / 7);
+      fijos += wd.length
+        ? (amount / wd.length) * dates.filter((d) => wd.includes(d.getDay())).length
+        : amount * (dates.length / 7);
     } else fijos += amount * (dates.length / 30);
   }
   // gastos operativos no-inventario (servilletas, escoba, propinas, desinfectante…)
@@ -583,7 +588,7 @@ export async function computeAnalytics(
     for (let w = 0; w < 7; w++) {
       let perDay = 0;
       if (c.schedule_type === "daily") perDay = amount;
-      else if (c.schedule_type === "weekly") perDay = wds.length ? (wds.includes(w) ? amount : 0) : amount / 7;
+      else if (c.schedule_type === "weekly") perDay = wds.length ? (wds.includes(w) ? amount / wds.length : 0) : amount / 7;
       else perDay = amount / 30;
       if (perDay > 0) sueldoDia.set(`${c.shift_id}|${w}`, (sueldoDia.get(`${c.shift_id}|${w}`) ?? 0) + perDay);
     }
@@ -663,7 +668,7 @@ export async function computeAnalytics(
       if (c.schedule_type === "daily") fijoDia += amount;
       else if (c.schedule_type === "weekly") {
         const wds = (c.weekdays as number[] | null) ?? [];
-        fijoDia += wds.length ? (wds.includes(wd) ? amount : 0) : amount / 7;
+        fijoDia += wds.length ? (wds.includes(wd) ? amount / wds.length : 0) : amount / 7;
       } else fijoDia += amount / 30;
     }
     const ventasD = ventasByDate.get(k) ?? 0;
@@ -804,7 +809,9 @@ export async function computeMonthlyPnL(
     if (c.schedule_type === "monthly") monto = amount; // el mes completo = el monto, una vez
     else if (c.schedule_type === "weekly") {
       const wds = (c.weekdays as number[] | null) ?? [];
-      monto = wds.length ? amount * wds.reduce((s, w) => s + (wdCount[w] ?? 0), 0) : amount * (daysInMonth / 7);
+      monto = wds.length
+        ? (amount / wds.length) * wds.reduce((s, w) => s + (wdCount[w] ?? 0), 0)
+        : amount * (daysInMonth / 7);
     } else monto = amount * daysInMonth; // daily
     if (c.category === "administrativo") fijos.administrativo += monto;
     else if (c.category === "financiero") fijos.financiero += monto;
