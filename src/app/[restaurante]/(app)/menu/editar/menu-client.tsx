@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
+import { Plus } from "lucide-react";
 import { PageTitle } from "@/components/ui";
 import { parseLocal, eachDate } from "@/lib/range";
 import {
   agregarAlMenu,
   agregarVariosAlMenu,
+  crearComboEnMenu,
   quitarDelMenu,
   toggleAgotado,
   copiarMenu,
@@ -21,6 +23,14 @@ interface DishRow {
   price: number;
   available: boolean;
   kind: "plato" | "combo";
+}
+
+interface ComboItem {
+  id: string;
+  name: string;
+  price: number;
+  isExtra: boolean;
+  category: "sopa" | "principal";
 }
 
 const KIND_TAG: Record<DishRow["kind"], { label: string; cls: string } | null> = {
@@ -54,11 +64,13 @@ export default function MenuClient({
   today,
   date,
   dishes,
+  comboItems,
 }: {
   isAdmin: boolean;
   today: string;
   date: string;
   dishes: DishRow[];
+  comboItems: ComboItem[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -70,6 +82,7 @@ export default function MenuClient({
     plato: false,
     combo: false,
   });
+  const [showComboForm, setShowComboForm] = useState(false);
 
   const addAll = (items: DishRow[]) => {
     const payload = items.map((d) => ({ dishId: d.id, price: d.catalogPrice }));
@@ -160,8 +173,11 @@ export default function MenuClient({
                 { kind: "combo", label: "Agregar combos" },
               ] as const
             ).map((g) => {
+              const isCombo = g.kind === "combo";
               const groupItems = fuera.filter((d) => d.kind === g.kind);
-              if (groupItems.length === 0) return null;
+              // El grupo de combos se muestra siempre (aunque esté vacío) para
+              // poder crear el primer combo con el botón “+”.
+              if (groupItems.length === 0 && !isCombo) return null;
               const q = norm(query.trim());
               const items =
                 q === "" ? groupItems : groupItems.filter((d) => norm(d.name).includes(q));
@@ -169,29 +185,54 @@ export default function MenuClient({
 
               return (
                 <div key={g.kind} className="overflow-hidden rounded-2xl border border-ink/10">
-                  <button
-                    onClick={() =>
-                      setOpenGroups((p) => ({ ...p, [g.kind]: !p[g.kind] }))
-                    }
-                    className="flex w-full items-center justify-between gap-2 bg-ink/[0.03] px-4 py-3 text-left"
-                  >
-                    <span className="text-sm font-semibold">
-                      {g.label}
-                      <span className="ml-2 text-xs font-normal opacity-50">
-                        {q !== ""
-                          ? `${items.length} resultado${items.length === 1 ? "" : "s"}`
-                          : `${groupItems.length} disponible${groupItems.length === 1 ? "" : "s"}`}
-                      </span>
-                    </span>
-                    <span
-                      className={`text-base transition-transform ${expanded ? "rotate-180" : ""}`}
+                  <div className="flex items-center bg-ink/[0.03]">
+                    <button
+                      onClick={() =>
+                        setOpenGroups((p) => ({ ...p, [g.kind]: !p[g.kind] }))
+                      }
+                      className="flex flex-1 items-center justify-between gap-2 px-4 py-3 text-left"
                     >
-                      ⌄
-                    </span>
-                  </button>
+                      <span className="text-sm font-semibold">
+                        {g.label}
+                        <span className="ml-2 text-xs font-normal opacity-50">
+                          {q !== ""
+                            ? `${items.length} resultado${items.length === 1 ? "" : "s"}`
+                            : `${groupItems.length} disponible${groupItems.length === 1 ? "" : "s"}`}
+                        </span>
+                      </span>
+                      <span
+                        className={`text-base transition-transform ${expanded ? "rotate-180" : ""}`}
+                      >
+                        ⌄
+                      </span>
+                    </button>
+                    {isCombo && isAdmin && (
+                      <button
+                        onClick={() => {
+                          setOpenGroups((p) => ({ ...p, combo: true }));
+                          setShowComboForm((v) => !v);
+                        }}
+                        title="Crear combo"
+                        aria-label="Crear combo"
+                        className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-white"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
 
                   {expanded && (
                     <div className="flex flex-col gap-2 border-t border-ink/10 p-3">
+                      {isCombo && showComboForm && (
+                        <ComboForm
+                          items={comboItems}
+                          date={date}
+                          onDone={() => {
+                            setShowComboForm(false);
+                            router.refresh();
+                          }}
+                        />
+                      )}
                       {items.length > 1 && (
                         <button
                           onClick={() => addAll(items)}
@@ -202,7 +243,9 @@ export default function MenuClient({
                         </button>
                       )}
                       {items.length === 0 ? (
-                        <p className="px-1 py-2 text-sm opacity-50">Sin resultados.</p>
+                        <p className="px-1 py-2 text-sm opacity-50">
+                          {isCombo ? "No hay combos disponibles. Crea uno con “+”." : "Sin resultados."}
+                        </p>
                       ) : (
                         <div className="flex max-h-80 flex-col gap-2 overflow-y-auto pr-1">
                           {items.map((d) => (
@@ -310,6 +353,141 @@ function Row({ dish, date }: { dish: DishRow; date: string }) {
           Agregar
         </button>
       )}
+    </div>
+  );
+}
+
+// Crear un combo desde el editor de menú: se eligen ≥2 ítems del catálogo
+// (sopas, platos y/o adicionales), nombre opcional y precio. Si hay precio, el
+// combo queda agregado al menú del día; si no, solo se crea en el catálogo.
+function ComboForm({
+  items,
+  date,
+  onDone,
+}: {
+  items: ComboItem[];
+  date: string;
+  onDone: () => void;
+}) {
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
+  const sopas = items.filter((d) => !d.isExtra && d.category === "sopa");
+  const principales = items.filter((d) => !d.isExtra && d.category !== "sopa");
+  const adicionales = items.filter((d) => d.isExtra);
+
+  if (items.length < 2) {
+    return (
+      <div className="rounded-2xl bg-ink/[0.03] px-3 py-5 text-center text-sm opacity-60">
+        Necesitas al menos 2 platos o adicionales en el catálogo para armar un combo.
+      </div>
+    );
+  }
+
+  const toggle = (id: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const roleOf = (d: ComboItem): "sopa" | "segundo" | "adicional" =>
+    d.isExtra ? "adicional" : d.category === "sopa" ? "sopa" : "segundo";
+
+  const crear = () => {
+    setMsg(null);
+    if (sel.size < 2) return setMsg("Elige al menos 2 ítems para el combo.");
+    const parts = items
+      .filter((d) => sel.has(d.id))
+      .map((d) => ({ dishId: d.id, role: roleOf(d) }));
+    start(async () => {
+      const r = await crearComboEnMenu({
+        parts,
+        name: name.trim() || undefined,
+        price: Number(price) || null,
+        date,
+      });
+      if (r.error) setMsg(r.error);
+      else onDone();
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-ink/10 bg-ink/[0.02] p-3">
+      <p className="text-sm font-semibold">Nuevo combo</p>
+      <p className="text-xs opacity-60">
+        Marca lo que entra (mínimo 2). El costo se arma solo; con precio, queda agregado al menú.
+      </p>
+      <ComboPick title="Sopas" items={sopas} sel={sel} onToggle={toggle} />
+      <ComboPick title="Platos" items={principales} sel={sel} onToggle={toggle} />
+      <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Nombre del combo (opcional)"
+        className={`w-full ${inputCls}`}
+      />
+      <input
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        inputMode="decimal"
+        placeholder="Precio del combo (ej. 2.50)"
+        className={`w-full ${inputCls}`}
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={crear}
+          disabled={pending}
+          className="rounded-full bg-ink px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          {pending ? "Creando…" : `Crear combo${sel.size ? ` · ${sel.size}` : ""}`}
+        </button>
+        {msg && <span className="text-sm text-coral">{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Chips seleccionables de un grupo de ítems para armar el combo.
+function ComboPick({
+  title,
+  items,
+  sel,
+  onToggle,
+}: {
+  title: string;
+  items: ComboItem[];
+  sel: Set<string>;
+  onToggle: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-50">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((d) => {
+          const on = sel.has(d.id);
+          return (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => onToggle(d.id)}
+              className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
+                on ? "bg-ink text-white" : "bg-ink/5"
+              }`}
+            >
+              {d.name}
+              <span className={`ml-1 text-xs font-normal ${on ? "text-white/70" : "opacity-40"}`}>
+                {money(d.price)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
