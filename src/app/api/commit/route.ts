@@ -30,8 +30,7 @@ export async function POST(req: Request) {
   }
 
   const db = createAdminClient();
-  // El PIN (si lo hay) viaja en el contexto para las acciones sensibles (anular).
-  const ctx: ToolCtx = { db, session, pin: body.pin };
+  const ctx: ToolCtx = { db, session };
 
   const results: { ok: boolean; reply: string }[] = [];
   let loggedOut = false;

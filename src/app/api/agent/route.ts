@@ -18,32 +18,28 @@ function buildSystem(
   session: SessionClaims,
   menu: string,
   productos: string,
-  catalog: string,
-  insumos: string,
+  clientes: string,
+  cuentas: string,
 ): string {
   return [
-    "Eres el asistente de 'Controla', una app de control de un restaurante pequeño en Ecuador.",
+    "Eres el asistente de VENTAS de 'Controla', una app de un restaurante pequeño en Ecuador.",
     `Usuaria: ${session.user_name} (${session.user_role}).`,
-    "Tu trabajo: convertir lo que dice la usuaria en una acción usando las herramientas disponibles.",
+    "Tu único trabajo es REGISTRAR VENTAS por voz: hacer lo mismo que el módulo de 'Registrar venta' de la app. Convierte lo que dice la usuaria en acciones usando SOLO las herramientas disponibles.",
+    "NO haces nada fuera de ventas (ni compras, ni gastos, ni inventario, ni caja, ni cierres). Si te piden algo así, di amablemente que aquí solo registras ventas.",
     "Reglas:",
     "- Responde SIEMPRE en español de Ecuador, breve y claro.",
-    "- Usa una herramienta cuando la intención sea clara. Si falta un dato esencial, pregúntalo en una frase.",
-    "- Si la usuaria dicta VARIAS cosas en un mismo mensaje (ej. 'ingresa 20 gaseosas a $5 y también 100 discos de empanada a $20'), devuelve TODAS las llamadas a funciones necesarias, UNA por cada acción. No te quedes solo con la primera.",
-    "- VENDER: usa el precio del MENÚ DE HOY. Si el plato no está en el menú ni en el catálogo, pregunta si se agrega y a qué precio. SIEMPRE confirma el precio, aunque ya esté en el catálogo.",
-    "- COMBO (sopa + segundo juntos a precio especial): aparece en el MENÚ DE HOY marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden SOLO la sopa o SOLO el segundo, vende cada uno por separado con su precio individual.",
-    "- ADICIONAL (huevo extra, porción): aparece marcado '(adicional)'. Véndelo como una venta más; descuenta su insumo solo.",
-    "- ARMAR un combo nuevo (no venderlo): usa crear_combo con la sopa y el segundo que ya existen en el catálogo.",
-    "- Las colas/bebidas y demás PRODUCTOS del inventario se venden directo y descuentan stock.",
-    "- 'Para llevar': se consume un envase (lonchera, bandeja, vaso). Si no está claro cuál, pregúntalo.",
-    "- GASTO (servilletas, escoba, gas, servicios) NO es inventario → usa registrar_gasto. COMPRA de algo que ENTRA al inventario (arroz, aceite, colas) → usa registrar_compra.",
-    "- En gastos y compras, pregunta si el dinero salió de la CAJA o lo puso la JEFA (fuente_pago).",
-    "- Producción: si dicen cuántas unidades salieron (presas, bolsitas) es contable; si no (arroz, sopa), es a granel.",
-    "- CONSUMO del día para cocinar, sin venderlo y sin nombrar un resultado (ej. 'consumimos 4 tomates', 'usamos 10 huevos hoy') → usa consumir_insumo: baja el stock y suma su costo al pool/costo del día de HOY. NO preguntes el costo.",
-    "- COMIDA DE EMPLEADA (consumo interno, gratis): ej. 'voy a comer mi almuerzo', 'me sirvo un seco', 'consumo el combo' → usa consumir_interno con el plato/sopa/combo. Se registra a $0 a su nombre (descuenta su proteína, entra al pool, NO es venta).",
-    "- Al COMPRAR algo que YA existe en el inventario, NO vuelvas a preguntar el precio de venta (ya está guardado) ni el costo unitario: el costo se promedia solo con lo que había.",
-    "- Para retiros de caja o de inventario, el motivo es obligatorio.",
-    "- ANULAR/REVERSAR (ej. 'anula la última venta', 'devolvieron las 2 colas', 'reversa la compra de arroz') → usa anular_operacion con el tipo (venta/compra/gasto/caja) y una pista de cuál. Pedirá el PIN de administradora al confirmar.",
-    "- La app pedirá confirmación antes de guardar; tú solo decide la acción.",
+    "- Usa la herramienta apenas la intención sea clara. Si falta un dato esencial, pregúntalo en una sola frase.",
+    "- MULTITAREA: si la usuaria dicta varias cosas en un mensaje (ej. 'cobra un seco con una cola, y abre la mesa 4 con 2 almuerzos'), devuelve TODAS las llamadas necesarias, una por acción. No te quedes con la primera.",
+    "- Agrupa en UNA sola venta/cuenta los ítems que van juntos: un mismo pedido (plato + adicional + bebida) es UNA llamada con varios items, no varias.",
+    "- PRECIOS: usa el precio del MENÚ DE HOY o de los PRODUCTOS. Si algo no está, pregunta el precio; no lo inventes.",
+    "- COMBO: aparece en el menú marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden solo la sopa o solo el segundo, usa el ítem individual.",
+    "- ADICIONAL (huevo extra, porción) y BEBIDAS (cola, agua): son ítems más de la venta. Pueden ir en una venta normal, a crédito o en una cuenta de mesa.",
+    "- VENTA AL CONTADO (efectivo) → registrar_venta.",
+    "- VENTA A CRÉDITO/FIADO a una persona registrada (ej. 'fíale a Juan') → registrar_credito con su nombre. Si no encuentras a la persona, dilo; no inventes nombres.",
+    "- CUENTAS POR COBRAR / MESAS: 'abre/registra la mesa N con…' → crear_cuenta. 'a la mesa N agrégale/quítale/pon X' → modificar_cuenta (op agregar/quitar/fijar). 'cobra la mesa N' → cobrar_cuenta. 'elimina/anula la mesa N' → eliminar_cuenta.",
+    "- Para cobrar, modificar o eliminar una mesa, esa cuenta debe EXISTIR ya (mira 'Cuentas abiertas'). Si pides crearla y cobrarla a la vez, primero créala.",
+    "- CONSUMO PROPIO (comida gratis de la empleada): 'voy a comer mi almuerzo', 'me sirvo un seco' → consumo_propio. SOLO el plato principal es gratis; las bebidas y adicionales NO son gratis (esos van como venta normal).",
+    "- La app SIEMPRE pide confirmación antes de guardar; tú solo decides y describes la acción.",
     "",
     "MENÚ DE HOY (este turno) — usa estos precios al vender:",
     menu,
@@ -51,11 +47,11 @@ function buildSystem(
     "Productos del inventario a la venta (nombre: precio):",
     productos,
     "",
-    "Catálogo de platos (para fijar el menú o definir recetas):",
-    catalog,
+    "Personas registradas (para venta a crédito):",
+    clientes,
     "",
-    "Insumos conocidos:",
-    insumos,
+    "Cuentas abiertas (mesas pendientes de cobro):",
+    cuentas,
   ].join("\n");
 }
 
@@ -95,25 +91,34 @@ export async function POST(req: Request) {
   const today = businessDate();
   // Menú efectivo del turno = lo de ESTE turno + lo de "Todo el día".
   const shiftIds = await menuShiftIds(db, session.restaurant_id, session.shift_id);
-  const [{ data: menuRows }, { data: dishes }, { data: ings }] = await Promise.all([
-    db
-      .from("daily_menu")
-      .select("dish_id,shift_id,price,available,dishes(name,is_combo,is_extra)")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("business_date", today)
-      .in("shift_id", shiftIds)
-      .order("sort_order"),
-    db
-      .from("dishes")
-      .select("name,price")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("active", true),
-    db
-      .from("ingredients")
-      .select("name,kind,consumption_unit,is_sellable,sale_price")
-      .eq("restaurant_id", session.restaurant_id)
-      .eq("active", true),
-  ]);
+  const [{ data: menuRows }, { data: ings }, { data: clientesRows }, { data: cuentasRows }] =
+    await Promise.all([
+      db
+        .from("daily_menu")
+        .select("dish_id,shift_id,price,available,dishes(name,is_combo,is_extra)")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("business_date", today)
+        .in("shift_id", shiftIds)
+        .order("sort_order"),
+      db
+        .from("ingredients")
+        .select("name,is_sellable,sale_price")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("is_sellable", true)
+        .eq("active", true),
+      db
+        .from("clientes")
+        .select("name,kind")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("active", true)
+        .order("name"),
+      db
+        .from("cuentas_mesa")
+        .select("label,total,items")
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("status", "abierta")
+        .order("created_at"),
+    ]);
 
   const menu =
     dedupeMenu(menuRows ?? [], session.shift_id)
@@ -126,27 +131,27 @@ export async function POST(req: Request) {
       .join("\n") || "(sin menú fijado para este turno)";
   const productos =
     (ings ?? [])
-      .filter((i) => i.is_sellable)
       .map((i) => `- ${i.name}: $${Number(i.sale_price ?? 0).toFixed(2)}`)
       .join("\n") || "(sin productos a la venta)";
-  const catalog =
-    (dishes ?? []).map((d) => `- ${d.name}: $${d.price}`).join("\n") ||
-    "(sin platos aún)";
-  const insumos =
-    (ings ?? [])
-      .filter((i) => !i.is_sellable)
-      .map(
-        (i) =>
-          `- ${i.name} (${i.kind}${i.consumption_unit ? `, en ${i.consumption_unit}` : ""})`,
-      )
-      .join("\n") || "(sin insumos aún)";
+  const clientes =
+    (clientesRows ?? [])
+      .map((c) => `- ${c.name} (${c.kind})`)
+      .join("\n") || "(sin personas registradas)";
+  const cuentas =
+    (cuentasRows ?? [])
+      .map((c) => {
+        const items = (c.items as unknown as { name: string; qty: number }[]) ?? [];
+        const detalle = items.map((i) => `${i.qty}×${i.name}`).join(", ");
+        return `- ${c.label}: ${detalle || "vacía"} ($${Number(c.total).toFixed(2)})`;
+      })
+      .join("\n") || "(no hay cuentas abiertas)";
 
   const turns: AgentTurn[] = [...history, { role: "user", text: userText }];
 
   let decision;
   try {
     decision = await runAgent({
-      systemInstruction: buildSystem(session, menu, productos, catalog, insumos),
+      systemInstruction: buildSystem(session, menu, productos, clientes, cuentas),
       history: turns,
       functionDeclarations: geminiFunctionDeclarations,
     });
@@ -161,7 +166,6 @@ export async function POST(req: Request) {
       tool: string;
       args: Record<string, unknown>;
       preview: string;
-      requiresPin?: boolean;
     }[] = [];
     const notas: string[] = [];
 
@@ -178,7 +182,7 @@ export async function POST(req: Request) {
           notas.push(r.message);
         } else {
           const preview = tool.preview ? await tool.preview(args, ctx) : "¿Confirmo esta acción?";
-          actions.push({ tool: tool.name, args, preview, requiresPin: tool.requiresPin });
+          actions.push({ tool: tool.name, args, preview });
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "No pude preparar una acción";

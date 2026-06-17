@@ -76,19 +76,40 @@ export default async function HoyPage({
         </span>
       </Link>
 
-      <Link
-        href={`/${restaurante}/vender`}
-        className="relative overflow-hidden rounded-[28px] bg-blue p-6 text-white"
-      >
-        <span className="blob absolute -right-6 -top-6 h-24 w-24 bg-white/20" />
-        <span className="blob absolute -bottom-8 left-12 h-16 w-16 bg-white/10" />
-        <span className="relative block text-xl font-bold leading-tight">
-          Registrar venta
-        </span>
-        <span className="relative mt-1 block text-sm text-white/85">
-          Marca los platos y cobra al toque
-        </span>
-      </Link>
+      <div className="relative overflow-hidden rounded-[28px] bg-blue text-white">
+        <Link href={`/${restaurante}/vender`} className="block p-6">
+          <span className="blob absolute -right-6 -top-6 h-24 w-24 bg-white/20" />
+          <span className="blob absolute -bottom-8 left-12 h-16 w-16 bg-white/10" />
+          <span className="relative block pr-16 text-xl font-bold leading-tight">
+            Registrar venta
+          </span>
+          <span className="relative mt-1 block pr-16 text-sm text-white/85">
+            Marca los platos y cobra al toque
+          </span>
+        </Link>
+        {/* Atajo al asistente de voz: toca el micrófono para registrar la venta
+            hablando; toca cualquier otra parte de la card para la venta manual. */}
+        <Link
+          href={`/${restaurante}/capturar`}
+          aria-label="Registrar venta por voz"
+          className="absolute right-4 top-1/2 z-10 flex h-16 w-16 -translate-y-1/2 items-center justify-center rounded-full bg-paper text-ink shadow-md transition active:scale-95"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-7 w-7"
+          >
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <line x1="12" y1="18" x2="12" y2="21" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+          </svg>
+        </Link>
+      </div>
 
       <Link href={`/${restaurante}/gastos`} className="rounded-3xl bg-mint p-5">
         <span className="block text-lg font-bold leading-tight">Registrar gasto</span>
