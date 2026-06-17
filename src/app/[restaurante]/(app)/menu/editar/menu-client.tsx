@@ -1,15 +1,33 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, GripVertical } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  arrayMove,
+  useSortable,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { PageTitle } from "@/components/ui";
 import { parseLocal, eachDate } from "@/lib/range";
 import {
   agregarAlMenu,
   agregarVariosAlMenu,
   crearComboEnMenu,
+  reordenarMenu,
   quitarDelMenu,
   toggleAgotado,
   copiarMenu,
@@ -22,6 +40,7 @@ interface DishRow {
   inMenu: boolean;
   price: number;
   available: boolean;
+  sortOrder: number;
   kind: "plato" | "combo";
 }
 
@@ -100,7 +119,9 @@ export default function MenuClient({
     go(ymd(d));
   };
 
-  const enMenu = dishes.filter((d) => d.inMenu);
+  const enMenu = dishes
+    .filter((d) => d.inMenu)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   const fuera = dishes.filter((d) => !d.inMenu);
 
   return (
@@ -139,10 +160,13 @@ export default function MenuClient({
 
       {enMenu.length > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide opacity-50">En el menú</p>
-          {enMenu.map((d) => (
-            <Row key={d.id} dish={d} date={date} />
-          ))}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide opacity-50">En el menú</p>
+            {enMenu.length > 1 && (
+              <p className="text-xs opacity-40">Mantén pulsado ⋮⋮ y arrastra para ordenar</p>
+            )}
+          </div>
+          <SortableMenu items={enMenu} date={date} />
         </div>
       )}
 
@@ -292,6 +316,83 @@ function DateStepper({
       >
         ›
       </button>
+    </div>
+  );
+}
+
+// Lista del menú del día arrastrable (drag & drop) para fijar el orden. El orden
+// se guarda en daily_menu.sort_order; el board "/menu" y "Registrar venta" leen
+// ese mismo orden, así es estándar para todos. Se arrastra desde el asa ⋮⋮ para
+// no chocar con el scroll del teléfono.
+function SortableMenu({ items, date }: { items: DishRow[]; date: string }) {
+  const router = useRouter();
+  const [, start] = useTransition();
+  const [order, setOrder] = useState(() => items.map((d) => d.id));
+  const idsKey = items.map((d) => d.id).join(",");
+
+  // Tras refrescar (reordenar, agregar o quitar), sincroniza con el servidor.
+  useEffect(() => {
+    setOrder(items.map((d) => d.id));
+  }, [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const byId = new Map(items.map((d) => [d.id, d]));
+  const ordered = order.map((id) => byId.get(id)).filter((d): d is DishRow => !!d);
+
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIndex = order.indexOf(String(active.id));
+    const newIndex = order.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const next = arrayMove(order, oldIndex, newIndex);
+    setOrder(next);
+    start(async () => {
+      await reordenarMenu({ dishIds: next, date });
+      router.refresh();
+    });
+  };
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <SortableContext items={order} strategy={verticalListSortingStrategy}>
+        <div className="flex flex-col gap-2">
+          {ordered.map((d) => (
+            <SortableRow key={d.id} dish={d} date={date} />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableRow({ dish, date }: { dish: DishRow; date: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: dish.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.7 : 1,
+    zIndex: isDragging ? 20 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-stretch gap-1">
+      <button
+        {...attributes}
+        {...listeners}
+        aria-label="Arrastrar para reordenar"
+        className="flex w-9 shrink-0 touch-none cursor-grab items-center justify-center rounded-xl text-ink/30 active:cursor-grabbing"
+      >
+        <GripVertical className="h-5 w-5" />
+      </button>
+      <div className="flex-1">
+        <Row dish={dish} date={date} />
+      </div>
     </div>
   );
 }

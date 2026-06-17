@@ -45,7 +45,7 @@ export default async function EditarMenuPage({
       .order("name"),
     db
       .from("daily_menu")
-      .select("dish_id,price,available")
+      .select("dish_id,price,available,sort_order")
       .eq("restaurant_id", session.restaurant_id)
       .eq("business_date", date)
       .eq("shift_id", allDayId ?? ""),
@@ -59,9 +59,13 @@ export default async function EditarMenuPage({
     category: d.category === "sopa" ? ("sopa" as const) : ("principal" as const),
   }));
 
-  const enMenu = new Map<string, { price: number; available: boolean }>();
+  const enMenu = new Map<string, { price: number; available: boolean; sortOrder: number }>();
   for (const m of menu ?? []) {
-    enMenu.set(m.dish_id, { price: Number(m.price), available: m.available });
+    enMenu.set(m.dish_id, {
+      price: Number(m.price),
+      available: m.available,
+      sortOrder: Number(m.sort_order ?? 0),
+    });
   }
 
   return (
@@ -79,6 +83,7 @@ export default async function EditarMenuPage({
           inMenu: !!o,
           price: o?.price ?? Number(d.price),
           available: o?.available ?? true,
+          sortOrder: o?.sortOrder ?? 0,
           kind: d.is_combo ? ("combo" as const) : ("plato" as const),
         };
       })}

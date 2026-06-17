@@ -182,6 +182,35 @@ export async function crearComboEnMenu(input: {
   return { ok: true };
 }
 
+// Fija el orden del menú del día (sort_order = posición en la lista). El mismo
+// orden lo leen el board "/menu" y "Registrar venta" (/vender), que ya ordenan
+// por sort_order — así el orden es único y estándar para todos.
+export async function reordenarMenu(input: {
+  dishIds: string[];
+  date?: string;
+}): Promise<ActionResult> {
+  const { session, db } = await ctx();
+  const ids = input.dishIds ?? [];
+  if (ids.length === 0) return { error: "No hay nada que ordenar." };
+  const t = await menuTarget(session, db, input.date);
+  const results = await Promise.all(
+    ids.map((dishId, i) =>
+      db
+        .from("daily_menu")
+        .update({ sort_order: i })
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("business_date", t.date)
+        .eq("shift_id", t.shiftId)
+        .eq("dish_id", dishId),
+    ),
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { error: failed.error.message };
+  revalidateMenu(session.slug);
+  revalidatePath(`/${session.slug}/vender`);
+  return { ok: true };
+}
+
 export async function quitarDelMenu(input: {
   dishId: string;
   date?: string;
