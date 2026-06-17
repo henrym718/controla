@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import AddModal from "@/components/agregar-producto-modal";
 import { registrarCompra } from "./actions";
 
 export interface Producto {
@@ -24,6 +25,7 @@ export default function ComprasClient({
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [sel, setSel] = useState<Producto | null>(null);
+  const [adding, setAdding] = useState(false);
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
   const filtered = useMemo(() => {
@@ -46,7 +48,7 @@ export default function ComprasClient({
       >
         <div className="mx-auto flex max-w-md items-center justify-between">
           <button
-            onClick={() => router.push(`/${slug}/hoy`)}
+            onClick={() => router.push(`/${slug}/admin`)}
             className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold"
           >
             ‹ Volver
@@ -62,12 +64,19 @@ export default function ComprasClient({
 
       <div className="flex-1 overflow-y-auto px-5 pb-10 pt-4">
         <div className="mx-auto max-w-md">
+          {/* Botón fijo: crear un producto que no existe sin salir de esta pantalla */}
+          <button
+            onClick={() => setAdding(true)}
+            className="mb-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-ink/25 bg-white px-4 py-3 text-base font-semibold"
+          >
+            <span className="text-xl leading-none">＋</span> Agregar producto
+          </button>
+
           {vacio ? (
-            <div className="rounded-3xl bg-ink/[0.03] px-6 py-12 text-center">
+            <div className="rounded-3xl bg-ink/[0.03] px-6 py-10 text-center">
               <p className="text-base font-semibold">Aún no hay productos</p>
               <p className="mx-auto mt-1 max-w-xs text-sm opacity-60">
-                La administradora crea los productos en el inventario. Después aquí registras sus
-                compras.
+                Toca «Agregar producto» para crear el primero y luego registra su compra.
               </p>
             </div>
           ) : (
@@ -101,8 +110,14 @@ export default function ComprasClient({
                   </button>
                 ))}
                 {filtered.length === 0 && (
-                  <div className="rounded-2xl bg-ink/[0.03] px-4 py-6 text-center text-sm opacity-60">
-                    No encuentro “{search}”. Si no existe, pídele a la administradora que lo cree.
+                  <div className="rounded-2xl bg-ink/[0.03] px-4 py-6 text-center">
+                    <p className="text-sm opacity-60">No encuentro “{search}”.</p>
+                    <button
+                      onClick={() => setAdding(true)}
+                      className="mt-2 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white"
+                    >
+                      Crear “{search.trim()}”
+                    </button>
                   </div>
                 )}
               </div>
@@ -110,6 +125,18 @@ export default function ComprasClient({
           )}
         </div>
       </div>
+
+      {adding && (
+        <AddModal
+          defaultName={search.trim() || undefined}
+          onClose={() => setAdding(false)}
+          onCreated={(name) => {
+            setSearch("");
+            flashMsg(true, `Producto creado: ${name}`);
+            router.refresh();
+          }}
+        />
+      )}
 
       {sel && (
         <CompraSheet

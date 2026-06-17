@@ -97,13 +97,6 @@ export default async function HoyPage({
         </span>
       </Link>
 
-      <Link href={`/${restaurante}/compras`} className="rounded-3xl bg-sand p-5">
-        <span className="block text-lg font-bold leading-tight">Registrar inventario</span>
-        <span className="mt-0.5 block text-sm opacity-60">
-          Insumos que compraste hoy
-        </span>
-      </Link>
-
       <Link href={`/${restaurante}/consumo`} className="rounded-3xl bg-lav p-5">
         <span className="block text-lg font-bold leading-tight">Registrar consumo de cocina</span>
         <span className="mt-0.5 block text-sm opacity-60">

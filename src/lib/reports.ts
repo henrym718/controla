@@ -127,6 +127,8 @@ export interface DaySummary {
   ventas: number;
   insumos: { total: number; items: { name: string; cost: number; granel: boolean }[] };
   productos: { total: number; items: { name: string; cost: number }[] };
+  // Compras de inventario del día: entran a stock, NO bajan la utilidad.
+  compras: { total: number; items: { name: string; qty: number; unit: string | null; cost: number }[] };
   gastos: { total: number; items: { name: string; cost: number }[] };
   fijos: { operativo: number; administrativo: number; financiero: number; total: number };
   // Consumo interno de empleadas (informativo; su costo ya está dentro de los costos)
@@ -164,7 +166,7 @@ export async function computeDaySummary(
     db.from("sales").select("total,payment_method").eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null).eq("consumo_interno", false),
     db.from("production_batches").select("total_cost, ingredients(name,kind)")
       .eq("restaurant_id", restaurantId).eq("business_date", date),
-    db.from("inventory_movements").select("qty,unit_cost,type, ingredients(name,costing_method)")
+    db.from("inventory_movements").select("qty,unit_cost,type, ingredients(name,costing_method,consumption_unit)")
       .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
     db.from("granel_close").select("merma_cost").eq("restaurant_id", restaurantId).eq("business_date", date),
     db.from("daily_close").select("status").eq("restaurant_id", restaurantId).eq("business_date", date).maybeSingle(),
@@ -196,11 +198,22 @@ export async function computeDaySummary(
   // Productos vendidos (desechables/reventa: bandejas, colas, verde…). Excluye
   // lo producido en tandas para no duplicar.
   const prodMap = new Map<string, number>();
+  // Compras de inventario del día (entran a stock; informativo, no baja la utilidad)
+  const compraMap = new Map<string, { qty: number; unit: string | null; cost: number }>();
   let mermaContable = 0;
   for (const m of moves ?? []) {
-    const ing = m.ingredients as unknown as { name: string; costing_method: string } | null;
+    const ing = m.ingredients as unknown as
+      | { name: string; costing_method: string; consumption_unit: string | null }
+      | null;
     const cost = Math.abs(Number(m.qty)) * Number(m.unit_cost);
     if (m.type === "merma") mermaContable += cost;
+    if (m.type === "compra") {
+      const name = ing?.name ?? "—";
+      const e = compraMap.get(name) ?? { qty: 0, unit: ing?.consumption_unit ?? null, cost: 0 };
+      e.qty += Math.abs(Number(m.qty));
+      e.cost += cost;
+      compraMap.set(name, e);
+    }
     if (m.type !== "venta") continue;
     if (!ing || ing.costing_method === "tanda") continue; // ya contado en insumos
     prodMap.set(ing.name, (prodMap.get(ing.name) ?? 0) + cost);
@@ -209,6 +222,11 @@ export async function computeDaySummary(
     .map(([name, cost]) => ({ name, cost }))
     .sort((a, b) => b.cost - a.cost);
   const productosTotal = prodItems.reduce((s, i) => s + i.cost, 0);
+
+  const compraItems = [...compraMap.entries()]
+    .map(([name, v]) => ({ name, qty: v.qty, unit: v.unit, cost: v.cost }))
+    .sort((a, b) => b.cost - a.cost);
+  const comprasTotal = compraItems.reduce((s, i) => s + i.cost, 0);
 
   // Costos fijos prorrateados a ESTE día
   const d = parseLocal(date);
@@ -334,6 +352,7 @@ export async function computeDaySummary(
     ventas,
     insumos: { total: insumosTotal, items: insumoItems },
     productos: { total: productosTotal, items: prodItems },
+    compras: { total: comprasTotal, items: compraItems },
     gastos: { total: gastosTotal, items: gastoItems },
     fijos: { ...fijos, total: fijosTotal },
     empleadas: { total: empleadasTotal, n: internas?.length ?? 0, items: empItems },
@@ -350,6 +369,92 @@ export async function computeDaySummary(
     merma,
     utilidad,
   };
+}
+
+// ===========================================================================
+//  SALIDAS DE CAJA DE UN DÍA (ledger de desembolsos: gastos + compras + retiros)
+//  El total suma TODO lo desembolsado en el día sin importar quién pagó. La
+//  fuente (caja / jefa) se muestra por fila como información, no cambia el total.
+// ===========================================================================
+export interface DaySalida {
+  tipo: "gasto" | "compra" | "retiro";
+  nombre: string;
+  detalle: string | null; // ej. cantidad + unidad para compras
+  monto: number;
+  fuente: "caja" | "jefa";
+}
+export interface DaySalidas {
+  date: string;
+  total: number;
+  items: DaySalida[];
+}
+
+export async function computeDaySalidas(
+  db: Db,
+  restaurantId: string,
+  date: string,
+): Promise<DaySalidas> {
+  const [{ data: expenses }, { data: moves }, { data: sessions }] = await Promise.all([
+    db.from("expenses").select("amount,category,note,op_id")
+      .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
+    db.from("inventory_movements").select("qty,unit_cost,op_id, ingredients(name,consumption_unit)")
+      .eq("restaurant_id", restaurantId).eq("business_date", date).eq("type", "compra").is("voided_at", null),
+    db.from("shift_sessions").select("id").eq("restaurant_id", restaurantId).eq("business_date", date),
+  ]);
+
+  const sessionIds = (sessions ?? []).map((s) => s.id);
+  const { data: cash } = sessionIds.length
+    ? await db.from("cash_movements").select("type,amount,reason,op_id")
+        .in("shift_session_id", sessionIds).is("voided_at", null)
+    : { data: [] as { type: string; amount: number; reason: string | null; op_id: string | null }[] };
+
+  // Una operación la "puso la jefa" si tiene un ingreso de caja con el mismo op_id.
+  const jefaOps = new Set(
+    (cash ?? []).filter((c) => c.type === "ingreso" && c.op_id).map((c) => c.op_id as string),
+  );
+  // op_ids de las compras: para no duplicarlas al listar los egresos de caja.
+  const compraOps = new Set((moves ?? []).map((m) => m.op_id).filter(Boolean) as string[]);
+
+  const items: DaySalida[] = [];
+
+  for (const e of expenses ?? []) {
+    items.push({
+      tipo: "gasto",
+      nombre: e.note?.trim() || e.category || "Gasto",
+      detalle: null,
+      monto: Number(e.amount),
+      fuente: e.op_id && jefaOps.has(e.op_id) ? "jefa" : "caja",
+    });
+  }
+
+  for (const m of moves ?? []) {
+    const ing = m.ingredients as unknown as { name: string; consumption_unit: string | null } | null;
+    const qty = Math.abs(Number(m.qty));
+    items.push({
+      tipo: "compra",
+      nombre: ing?.name ?? "Compra",
+      detalle: `${qty}${ing?.consumption_unit ? ` ${ing.consumption_unit}` : ""}`,
+      monto: qty * Number(m.unit_cost),
+      fuente: m.op_id && jefaOps.has(m.op_id) ? "jefa" : "caja",
+    });
+  }
+
+  // Otros egresos de caja (retiros) que NO son compras (esas ya están arriba).
+  for (const c of cash ?? []) {
+    if (c.type !== "egreso") continue;
+    if (c.op_id && compraOps.has(c.op_id)) continue;
+    items.push({
+      tipo: "retiro",
+      nombre: c.reason?.trim() || "Retiro de caja",
+      detalle: null,
+      monto: Number(c.amount),
+      fuente: c.op_id && jefaOps.has(c.op_id) ? "jefa" : "caja",
+    });
+  }
+
+  items.sort((a, b) => b.monto - a.monto);
+  const total = items.reduce((s, i) => s + i.monto, 0);
+  return { date, total, items };
 }
 
 // ===========================================================================

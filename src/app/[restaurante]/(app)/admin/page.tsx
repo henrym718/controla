@@ -18,6 +18,7 @@ export default async function AdminPage({
       title: "Día a día",
       items: [
         { href: `${base}/resumen`, label: "Resumen diario", tone: "bg-lav" },
+        { href: `${base}/salidas-caja`, label: "Salidas de caja", tone: "bg-peach" },
         { href: `${base}/cuadres`, label: "Cuadres de caja", tone: "bg-peach" },
         { href: `${base}/cierre-dia`, label: "Cerrar el día", tone: "bg-mint" },
       ],
@@ -36,6 +37,7 @@ export default async function AdminPage({
       items: [
         { href: `${base}/catalogo`, label: "Catálogo de platos", tone: "bg-lav" },
         { href: `${base}/inventario`, label: "Inventario", tone: "bg-sand" },
+        { href: `${base}/compras`, label: "Registrar inventario", tone: "bg-sand" },
         { href: `${base}/merma`, label: "Productos dañados", tone: "bg-coral/15" },
       ],
     },

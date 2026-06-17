@@ -102,6 +102,34 @@ export default function ResumenClient({
             </div>
           </Card>
 
+          {/* Compras de inventario (entró a stock; informativo, no baja la utilidad) */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Compras de inventario (entró a stock)</p>
+              <span className="font-bold">{money(s.compras.total)}</span>
+            </div>
+            <div className="mt-1">
+              {s.compras.items.map((i) => (
+                <div key={i.name} className={sub}>
+                  <span>
+                    {i.name}{" "}
+                    <span className="opacity-50">
+                      · {i.qty}
+                      {i.unit ? ` ${i.unit}` : ""}
+                    </span>
+                  </span>
+                  <span>{money(i.cost)}</span>
+                </div>
+              ))}
+              {s.compras.items.length === 0 && (
+                <p className="py-1 text-xs opacity-50">Sin compras de inventario registradas.</p>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] opacity-50">
+              No baja la utilidad: es dinero que se convierte en stock.
+            </p>
+          </Card>
+
           {/* Gastos del día (servilletas, escoba, gas, servicios) */}
           <Card>
             <div className="flex items-center justify-between">
