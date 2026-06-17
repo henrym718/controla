@@ -47,6 +47,23 @@ async function resolveSellableProduct(ctx: ToolCtx, name: string) {
   return data?.[0] ?? null;
 }
 
+/**
+ * Adicional (huevo extra, tortilla de verde, porción…): plato con is_extra=true.
+ * Está SIEMPRE disponible para la venta aunque no esté en el menú del día (igual
+ * que en el módulo manual, que los lista todos, no solo los del menú).
+ */
+async function resolveExtraDish(ctx: ToolCtx, name: string) {
+  const { data } = await ctx.db
+    .from("dishes")
+    .select("id,name,price")
+    .eq("restaurant_id", ctx.session.restaurant_id)
+    .eq("is_extra", true)
+    .eq("active", true)
+    .ilike("name", `%${name}%`)
+    .limit(1);
+  return data?.[0] ?? null;
+}
+
 /** Platos del menú de HOY del turno actual (incluye los de "Todo el día"). */
 async function todayMenu(ctx: ToolCtx) {
   const shiftIds = await menuShiftIds(
@@ -114,6 +131,11 @@ async function resolveSaleTarget(
       qty: 1,
       agotado: !m.available,
     };
+  }
+  // Adicionales: siempre disponibles aunque no estén en el menú de hoy.
+  const ad = await resolveExtraDish(ctx, name);
+  if (ad) {
+    return { kind: "plato", id: ad.id, name: ad.name, unitPrice: unitPrice ?? Number(ad.price), qty: 1 };
   }
   return null;
 }

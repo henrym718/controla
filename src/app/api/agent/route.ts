@@ -17,6 +17,7 @@ export const runtime = "nodejs";
 function buildSystem(
   session: SessionClaims,
   menu: string,
+  adicionales: string,
   productos: string,
   clientes: string,
   cuentas: string,
@@ -33,8 +34,9 @@ function buildSystem(
     "- Agrupa en UNA sola venta/cuenta los ítems que van juntos: un mismo pedido (plato + adicional + bebida) es UNA llamada con varios items, no varias.",
     "- SOLO vendes platos del MENÚ DE HOY y productos de la lista; nunca inventes platos ni uses unos que no estén en el menú de hoy. Si no encuentras lo que piden, pide que repitan el nombre o digan a cuál plato del menú se refieren.",
     "- AGOTADO: un plato marcado '(AGOTADO)' en el menú de hoy sigue existiendo. Si lo piden, intenta venderlo igual: la app te ofrecerá reactivarlo y registrar la venta al confirmar.",
-    "- COMBO: aparece en el menú marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden solo la sopa o solo el segundo, usa el ítem individual.",
-    "- ADICIONAL (huevo extra, porción) y BEBIDAS (cola, agua): son ítems más de la venta. Pueden ir en una venta normal, a crédito o en una cuenta de mesa.",
+    "- COMBO: aparece en el MENÚ DE HOY marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden solo la sopa o solo el segundo, usa el ítem individual.",
+    "- ADICIONALES (huevo extra, tortilla de verde, porción…): están SIEMPRE disponibles aunque no estén en el menú de hoy; búscalos en la lista 'Adicionales'. Las BEBIDAS/PRODUCTOS (cola, agua) están en su lista. Todos pueden ir en una venta normal, a crédito o en una mesa.",
+    "- DESAMBIGUA cuando el pedido sea vago: ej. 'una tortilla de verde y un café' puede ser DOS adicionales por separado, PERO también puede existir un COMBO ('Tortilla de verde + café' o '… + huevo frito'). Mira si hay un combo que calce. Si lo hay y no está claro cuál quieren, NO asumas: pregunta en una frase '¿el combo Tortilla+café ($X) o la tortilla y el café por separado?' y solo registra cuando confirmen.",
     "- VENTA AL CONTADO (efectivo) → registrar_venta.",
     "- VENTA A CRÉDITO/FIADO a una persona registrada (ej. 'fíale a Juan') → registrar_credito con su nombre. Si no encuentras a la persona, dilo; no inventes nombres.",
     "- CUENTAS POR COBRAR / MESAS: 'abre/registra la mesa N con…' → crear_cuenta. 'a la mesa N agrégale/quítale/pon X' → modificar_cuenta (op agregar/quitar/fijar). 'cobra la mesa N' → cobrar_cuenta. 'elimina/anula la mesa N' → eliminar_cuenta.",
@@ -42,8 +44,11 @@ function buildSystem(
     "- CONSUMO PROPIO (comida gratis de la empleada): 'voy a comer mi almuerzo', 'me sirvo un seco' → consumo_propio. SOLO el plato principal es gratis; las bebidas y adicionales NO son gratis (esos van como venta normal).",
     "- La app SIEMPRE pide confirmación antes de guardar; tú solo decides y describes la acción.",
     "",
-    "MENÚ DE HOY (este turno) — usa estos precios al vender:",
+    "MENÚ DE HOY (este turno) — platos principales y combos, con su precio:",
     menu,
+    "",
+    "Adicionales (siempre disponibles, no dependen del menú de hoy):",
+    adicionales,
     "",
     "Productos del inventario a la venta (nombre: precio):",
     productos,
@@ -92,47 +97,68 @@ export async function POST(req: Request) {
   const today = businessDate();
   // Menú efectivo del turno = lo de ESTE turno + lo de "Todo el día".
   const shiftIds = await menuShiftIds(db, session.restaurant_id, session.shift_id);
-  const [{ data: menuRows }, { data: ings }, { data: clientesRows }, { data: cuentasRows }] =
-    await Promise.all([
-      db
-        .from("daily_menu")
-        .select("dish_id,shift_id,price,available,dishes(name,is_combo,is_extra)")
-        .eq("restaurant_id", session.restaurant_id)
-        .eq("business_date", today)
-        .in("shift_id", shiftIds)
-        .order("sort_order"),
-      db
-        .from("ingredients")
-        .select("name,is_sellable,sale_price")
-        .eq("restaurant_id", session.restaurant_id)
-        .eq("is_sellable", true)
-        .eq("active", true),
-      db
-        .from("clientes")
-        .select("name,kind")
-        .eq("restaurant_id", session.restaurant_id)
-        .eq("active", true)
-        .order("name"),
-      db
-        .from("cuentas_mesa")
-        .select("label,total,items")
-        .eq("restaurant_id", session.restaurant_id)
-        .eq("status", "abierta")
-        .order("created_at"),
-    ]);
+  const [
+    { data: menuRows },
+    { data: extras },
+    { data: ings },
+    { data: clientesRows },
+    { data: cuentasRows },
+  ] = await Promise.all([
+    db
+      .from("daily_menu")
+      .select("dish_id,shift_id,price,available,dishes(name,is_combo,is_extra)")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("business_date", today)
+      .in("shift_id", shiftIds)
+      .order("sort_order"),
+    db
+      .from("dishes")
+      .select("name,price")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("is_extra", true)
+      .eq("active", true)
+      .order("name"),
+    db
+      .from("ingredients")
+      .select("name,is_sellable,sale_price")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("is_sellable", true)
+      .eq("active", true),
+    db
+      .from("clientes")
+      .select("name,kind")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("active", true)
+      .order("name"),
+    db
+      .from("cuentas_mesa")
+      .select("label,total,items")
+      .eq("restaurant_id", session.restaurant_id)
+      .eq("status", "abierta")
+      .order("created_at"),
+  ]);
 
+  // El menú de hoy lista principales y combos; los adicionales van en su propia
+  // lista (están siempre disponibles, no dependen del menú del día).
   const menu =
     dedupeMenu(menuRows ?? [], session.shift_id)
+      .filter((m) => {
+        const d = m.dishes as unknown as { is_extra: boolean } | null;
+        return !d?.is_extra;
+      })
       .map((m) => {
-        const d = m.dishes as unknown as { name: string; is_combo: boolean; is_extra: boolean } | null;
+        const d = m.dishes as unknown as { name: string; is_combo: boolean } | null;
         const tags: string[] = [];
         if (d?.is_combo) tags.push("combo");
-        else if (d?.is_extra) tags.push("adicional");
         if (!m.available) tags.push("AGOTADO");
         const tag = tags.length ? ` (${tags.join(", ")})` : "";
         return `- ${d?.name ?? "?"}${tag}: $${Number(m.price).toFixed(2)}`;
       })
       .join("\n") || "(sin menú fijado para este turno)";
+  const adicionales =
+    (extras ?? [])
+      .map((d) => `- ${d.name}: $${Number(d.price).toFixed(2)}`)
+      .join("\n") || "(sin adicionales)";
   const productos =
     (ings ?? [])
       .map((i) => `- ${i.name}: $${Number(i.sale_price ?? 0).toFixed(2)}`)
@@ -155,7 +181,7 @@ export async function POST(req: Request) {
   let decision;
   try {
     decision = await runAgent({
-      systemInstruction: buildSystem(session, menu, productos, clientes, cuentas),
+      systemInstruction: buildSystem(session, menu, adicionales, productos, clientes, cuentas),
       history: turns,
       functionDeclarations: geminiFunctionDeclarations,
     });
