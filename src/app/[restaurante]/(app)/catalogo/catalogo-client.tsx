@@ -205,6 +205,7 @@ export default function CatalogoClient({
           adicionales={adicionales}
           contables={contables}
           ingredients={ingredients}
+          components={components}
           onClose={() => setShowAdd(false)}
           onPick={(d) => {
             setShowAdd(false);
@@ -226,6 +227,8 @@ export default function CatalogoClient({
           slug={slug}
           platos={platos}
           adicionales={adicionales}
+          ingredients={ingredients}
+          components={components}
           comboParts={parts.filter((p) => p.comboId === editDish.id)}
           onClose={() => setEditDish(null)}
         />
@@ -242,6 +245,7 @@ function AddCatalogModal({
   adicionales,
   contables,
   ingredients,
+  components,
   onClose,
   onPick,
 }: {
@@ -249,6 +253,7 @@ function AddCatalogModal({
   adicionales: Dish[];
   contables: Ingredient[];
   ingredients: Ingredient[];
+  components: Comp[];
   onClose: () => void;
   onPick: (dish: Dish) => void;
 }) {
@@ -287,7 +292,13 @@ function AddCatalogModal({
           <FormPlato platos={platos} ingredients={ingredients} onPick={onPick} onDone={onClose} />
         )}
         {tab === "combo" && (
-          <FormCombo platos={platos} adicionales={adicionales} onDone={onClose} />
+          <FormCombo
+            platos={platos}
+            adicionales={adicionales}
+            ingredients={ingredients}
+            components={components}
+            onDone={onClose}
+          />
         )}
         {tab === "adicional" && <FormAdicional contables={contables} onDone={onClose} />}
       </div>
@@ -421,10 +432,14 @@ function FormPlato({
 function FormCombo({
   platos,
   adicionales,
+  ingredients,
+  components,
   onDone,
 }: {
   platos: Dish[];
   adicionales: Dish[];
+  ingredients: Ingredient[];
+  components: Comp[];
   onDone: () => void;
 }) {
   const sopas = platos.filter((d) => d.category === "sopa");
@@ -482,6 +497,8 @@ function FormCombo({
       <ComboPick title="Platos principales" items={principales} sel={sel} onToggle={toggle} />
       <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
 
+      <ComboRecipePreview selectedIds={sel} ingredients={ingredients} components={components} />
+
       <Field label="Nombre del combo (opcional)">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Combo del día" />
       </Field>
@@ -532,6 +549,69 @@ function ComboPick({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Receta que el combo descontará al vender = suma de las recetas de los ítems
+// marcados (en vivo). Es lo que el usuario pidió ver "en la parte de abajo": si
+// los platos no tienen receta, lo avisa para que no quede un combo que no
+// descuenta inventario.
+function ComboRecipePreview({
+  selectedIds,
+  ingredients,
+  components,
+}: {
+  selectedIds: Set<string>;
+  ingredients: Ingredient[];
+  components: Comp[];
+}) {
+  if (selectedIds.size === 0) return null;
+
+  const ingById = new Map(ingredients.map((i) => [i.id, i]));
+  const agg = new Map<string, number>();
+  for (const c of components) {
+    if (!selectedIds.has(c.dishId)) continue;
+    agg.set(c.ingredientId, (agg.get(c.ingredientId) ?? 0) + c.qty);
+  }
+  const rows = [...agg.entries()]
+    .map(([id, qty]) => ({ ing: ingById.get(id), qty }))
+    .filter((r): r is { ing: Ingredient; qty: number } => Boolean(r.ing))
+    .sort((a, b) => a.ing.name.localeCompare(b.ing.name));
+
+  return (
+    <div className="flex flex-col gap-1.5 rounded-2xl bg-ink/[0.02] p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+        Insumos que descontará al vender
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-sm opacity-60">
+          Los platos elegidos aún no tienen receta. Agrégales su receta y el combo la descontará
+          solo.
+        </p>
+      ) : (
+        rows.map((r) => {
+          const granel = r.ing.kind === "granel";
+          return (
+            <div key={r.ing.id} className="flex items-center justify-between gap-2 text-sm">
+              <span className="min-w-0 truncate font-medium">
+                {r.ing.name}
+                <span
+                  className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    granel ? "bg-sand" : "bg-mint"
+                  }`}
+                >
+                  {granel ? "granel" : "directo"}
+                </span>
+              </span>
+              <span className="shrink-0 font-semibold">×{r.qty}</span>
+            </div>
+          );
+        })
+      )}
+      <p className="text-[11px] opacity-50">
+        Se arma solo con la receta de cada plato. Para cambiarlo, edita la receta del plato.
+      </p>
     </div>
   );
 }
@@ -604,6 +684,8 @@ function EditDishModal({
   slug,
   platos,
   adicionales,
+  ingredients,
+  components,
   comboParts,
   onClose,
 }: {
@@ -611,6 +693,8 @@ function EditDishModal({
   slug: string;
   platos: Dish[];
   adicionales: Dish[];
+  ingredients: Ingredient[];
+  components: Comp[];
   comboParts: Part[];
   onClose: () => void;
 }) {
@@ -692,6 +776,7 @@ function EditDishModal({
               <ComboPick title="Sopas" items={sopas} sel={sel} onToggle={toggle} />
               <ComboPick title="Platos principales" items={principales} sel={sel} onToggle={toggle} />
               <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
+              <ComboRecipePreview selectedIds={sel} ingredients={ingredients} components={components} />
               <p className="text-xs opacity-60">
                 Al guardar, la receta y el costo del combo se recalculan según los ítems marcados.
               </p>

@@ -87,6 +87,7 @@ export async function loginAction(
 
   let sessionId = existing?.id;
   const abrioTurno = !sessionId; // abrió el turno (no se unió a uno ya abierto)
+  let cajaActualizada = false; // se reingresó con un monto >0 que corrigió la caja
   if (!sessionId) {
     // Abrir un turno NUEVO exige declarar la caja explícitamente (aunque sea 0).
     if (openingCash == null) {
@@ -106,6 +107,18 @@ export async function loginAction(
       .single();
     if (createErr || !created) return { error: "No se pudo abrir el turno." };
     sessionId = created.id;
+  } else if (openingCash != null && openingCash > 0) {
+    // Reingreso a un turno ya abierto: un monto >0 CORRIGE la caja inicial
+    // (0 o vacío no la tocan). Solo antes de bloquear el conteo (anti-robo).
+    const { data: upd } = await db
+      .from("shift_sessions")
+      .update({ opening_cash: openingCash })
+      .eq("id", sessionId)
+      .eq("status", "open")
+      .is("counted_at", null)
+      .select("id")
+      .maybeSingle();
+    cajaActualizada = !!upd;
   }
 
   await db
@@ -131,8 +144,10 @@ export async function loginAction(
     event: "login",
     description: abrioTurno
       ? `${user.name} abrió el turno ${shift.name}${openingCash != null ? ` (caja inicial ${money(openingCash)})` : ""}`
-      : `${user.name} entró al turno ${shift.name}`,
-    metadata: { shift: shift.name, abrio: abrioTurno },
+      : cajaActualizada
+        ? `${user.name} entró al turno ${shift.name} y corrigió la caja inicial a ${money(openingCash!)}`
+        : `${user.name} entró al turno ${shift.name}`,
+    metadata: { shift: shift.name, abrio: abrioTurno, caja_actualizada: cajaActualizada },
   });
 
   redirect(`/${slug}/hoy`);
@@ -209,6 +224,7 @@ export async function cambiarTurnoAction(
     .maybeSingle();
 
   let sessionId = existing?.id;
+  let cajaActualizada = false;
   if (!sessionId) {
     if (openingCash == null) {
       return { error: "Escribe la caja inicial del turno (puede ser 0)." };
@@ -227,6 +243,18 @@ export async function cambiarTurnoAction(
       .single();
     if (e || !created) return { error: "No se pudo abrir el turno." };
     sessionId = created.id;
+  } else if (openingCash != null && openingCash > 0) {
+    // Turno ya abierto: un monto >0 corrige la caja inicial (0/vacío no la toca).
+    // Solo antes de bloquear el conteo (anti-robo).
+    const { data: upd } = await db
+      .from("shift_sessions")
+      .update({ opening_cash: openingCash })
+      .eq("id", sessionId)
+      .eq("status", "open")
+      .is("counted_at", null)
+      .select("id")
+      .maybeSingle();
+    cajaActualizada = !!upd;
   }
   await db
     .from("shift_session_members")
@@ -249,8 +277,10 @@ export async function cambiarTurnoAction(
     shiftSessionId: sessionId,
     source: "manual",
     event: "cambio_turno",
-    description: `${session.user_name} cambió al turno ${shift.name}`,
-    metadata: { shift: shift.name },
+    description: cajaActualizada
+      ? `${session.user_name} cambió al turno ${shift.name} y corrigió la caja inicial a ${money(openingCash!)}`
+      : `${session.user_name} cambió al turno ${shift.name}`,
+    metadata: { shift: shift.name, caja_actualizada: cajaActualizada },
   });
 
   redirect(`/${session.slug}/hoy`);

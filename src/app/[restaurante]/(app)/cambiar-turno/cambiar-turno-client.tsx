@@ -78,7 +78,7 @@ export default function CambiarTurnoClient({
         })}
       </div>
 
-      {opening && (
+      {shiftId !== "" && (
         <div className="flex flex-col gap-1">
           <input
             inputMode="decimal"
@@ -87,13 +87,17 @@ export default function CambiarTurnoClient({
               setOpeningCash(e.target.value);
               if (cajaInvalid) setCajaInvalid(false);
             }}
-            placeholder="Caja inicial (escribe 0 si no hay)"
+            placeholder={
+              opening ? "Caja inicial (escribe 0 si no hay)" : "Corregir caja (deja 0 si no cambia)"
+            }
             className={`rounded-2xl border px-4 py-3 text-sm outline-none ${
               cajaInvalid ? "border-coral focus:border-coral" : "border-ink/15 focus:border-ink/40"
             }`}
           />
           <p className="px-1 text-xs opacity-50">
-            Vas a ABRIR este turno: escribe la caja con la que inicias.
+            {opening
+              ? "Vas a ABRIR este turno: escribe la caja con la que inicias."
+              : "Turno ya abierto. Escribe un monto solo si quieres corregir la caja inicial; 0 o vacío la dejan igual."}
           </p>
         </div>
       )}
