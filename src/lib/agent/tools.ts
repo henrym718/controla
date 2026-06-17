@@ -30,17 +30,9 @@ const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 // ---------------------------------------------------------------------------
 //  Resolvers (solo lectura) — todo gira alrededor de registrar una venta.
+//  Los PLATOS solo se reconocen si están en el MENÚ DE HOY (no en el catálogo
+//  general). Las BEBIDAS/PRODUCTOS vendibles del inventario sí se venden directo.
 // ---------------------------------------------------------------------------
-async function resolveDish(ctx: ToolCtx, name: string) {
-  const { data } = await ctx.db
-    .from("dishes")
-    .select("id,name,price,is_extra")
-    .eq("restaurant_id", ctx.session.restaurant_id)
-    .eq("active", true)
-    .ilike("name", `%${name}%`)
-    .limit(1);
-  return data?.[0] ?? null;
-}
 
 /** Producto del inventario vendible directo (cola, agua…). */
 async function resolveSellableProduct(ctx: ToolCtx, name: string) {
@@ -64,17 +56,18 @@ async function todayMenu(ctx: ToolCtx) {
   );
   const { data } = await ctx.db
     .from("daily_menu")
-    .select("id,dish_id,shift_id,price,available,dishes(id,name)")
+    .select("id,dish_id,shift_id,price,available,dishes(id,name,is_extra)")
     .eq("restaurant_id", ctx.session.restaurant_id)
     .eq("business_date", businessDate())
     .in("shift_id", shiftIds)
     .order("sort_order");
   return dedupeMenu(data ?? [], ctx.session.shift_id).map((m) => {
-    const d = m.dishes as unknown as { id: string; name: string } | null;
+    const d = m.dishes as unknown as { id: string; name: string; is_extra: boolean } | null;
     return {
       menuId: m.id,
       price: Number(m.price),
       available: m.available,
+      isExtra: !!d?.is_extra,
       dishId: d?.id ?? null,
       name: d?.name ?? "",
     };
@@ -88,9 +81,16 @@ interface ResolvedLine {
   name: string;
   unitPrice: number;
   qty: number;
+  /** Plato que ESTÁ en el menú de hoy pero marcado agotado (hay que reactivarlo). */
+  agotado?: boolean;
 }
 
-/** Decide si lo que se vende es un PRODUCTO de inventario o un PLATO (menú/catálogo). */
+/**
+ * Resuelve lo que se vende: primero un PRODUCTO vendible del inventario (cola,
+ * agua), si no, un PLATO del MENÚ DE HOY. NO cae al catálogo general: si el plato
+ * no está en el menú de hoy, devuelve null para que se pida aclarar el nombre.
+ * Si el plato está en el menú pero agotado, lo marca para reactivar al confirmar.
+ */
 async function resolveSaleTarget(
   ctx: ToolCtx,
   name: string,
@@ -104,24 +104,44 @@ async function resolveSaleTarget(
     return { kind: "producto", id: prod.id, name: prod.name, unitPrice: price, qty: 1 };
   }
   const menu = await todayMenu(ctx);
-  const m = menu.find(
-    (x) => x.available && x.dishId && x.name.toLowerCase().includes(name.toLowerCase()),
-  );
+  const m = menu.find((x) => x.dishId && x.name.toLowerCase().includes(name.toLowerCase()));
   if (m && m.dishId) {
-    return { kind: "plato", id: m.dishId, name: m.name, unitPrice: unitPrice ?? m.price, qty: 1 };
-  }
-  const dish = await resolveDish(ctx, name);
-  if (dish) {
     return {
       kind: "plato",
-      id: dish.id,
-      name: dish.name,
-      unitPrice: unitPrice ?? Number(dish.price),
+      id: m.dishId,
+      name: m.name,
+      unitPrice: unitPrice ?? m.price,
       qty: 1,
+      agotado: !m.available,
     };
   }
   return null;
 }
+
+/** Nombres de platos agotados en una lista (para avisar antes de confirmar). */
+const agotadoNote = (lines: ResolvedLine[]): string => {
+  const a = lines.filter((l) => l.agotado).map((l) => l.name);
+  return a.length ? ` (${a.join(", ")} estaba agotado hoy — lo reactivo y registro)` : "";
+};
+
+/** Reactiva en el menú de hoy los platos que estaban agotados antes de venderlos. */
+async function reactivarPlatos(ctx: ToolCtx, dishIds: string[]) {
+  if (dishIds.length === 0) return;
+  const shiftIds = await menuShiftIds(
+    ctx.db,
+    ctx.session.restaurant_id,
+    ctx.session.shift_id,
+  );
+  await ctx.db
+    .from("daily_menu")
+    .update({ available: true })
+    .eq("restaurant_id", ctx.session.restaurant_id)
+    .eq("business_date", businessDate())
+    .in("shift_id", shiftIds)
+    .in("dish_id", dishIds);
+}
+const agotadoIds = (lines: ResolvedLine[]): string[] =>
+  lines.filter((l) => l.kind === "plato" && l.agotado).map((l) => l.id);
 
 /** Resuelve una lista hablada de ítems (nombre + cantidad) a líneas de venta. */
 interface ItemInput {
@@ -301,9 +321,10 @@ async function applyCambios(
   ctx: ToolCtx,
   cuenta: CuentaRow,
   cambios: z.infer<typeof cambioSchema>[],
-): Promise<{ items: CuentaItem[]; missing: string[] }> {
+): Promise<{ items: CuentaItem[]; missing: string[]; reactivar: { id: string; name: string }[] }> {
   const items = cuenta.items.map((i) => ({ ...i }));
   const missing: string[] = [];
+  const reactivar: { id: string; name: string }[] = [];
   for (const c of cambios) {
     const t = await resolveSaleTarget(ctx, c.name);
     if (!t) {
@@ -323,15 +344,17 @@ async function applyCambios(
       if (idx === -1)
         items.push({ kind: t.kind, ref_id: t.id, name: t.name, unit_price: t.unitPrice, qty });
       else items[idx].qty = qty;
+      if (t.kind === "plato" && t.agotado) reactivar.push({ id: t.id, name: t.name });
     } else {
       // agregar
       const qty = c.qty ?? 1;
       if (idx === -1)
         items.push({ kind: t.kind, ref_id: t.id, name: t.name, unit_price: t.unitPrice, qty });
       else items[idx].qty += qty;
+      if (t.kind === "plato" && t.agotado) reactivar.push({ id: t.id, name: t.name });
     }
   }
-  return { items, missing };
+  return { items, missing, reactivar };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,14 +377,15 @@ export const TOOLS: Record<string, Tool> = {
       const a = ventaSchema.parse(args);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
-      return `Registrar venta (efectivo): ${listLines(lines)} = ${money(linesTotal(lines))}. ¿Confirmo?`;
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      return `Registrar venta (efectivo): ${listLines(lines)} = ${money(linesTotal(lines))}.${agotadoNote(lines)} ¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = ventaSchema.parse(args);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      await reactivarPlatos(ctx, agotadoIds(lines));
       let total = 0;
       for (const it of lines) {
         const { data, error } = await ctx.db.rpc("registrar_venta", {
@@ -417,8 +441,8 @@ export const TOOLS: Record<string, Tool> = {
         throw new Error(`No tengo registrada a «${a.cliente_name}». Regístrala primero en Clientes.`);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
-      return `Fiar a «${cliente.name}»: ${listLines(lines)} = ${money(linesTotal(lines))} (queda por cobrar). ¿Confirmo?`;
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      return `Fiar a «${cliente.name}»: ${listLines(lines)} = ${money(linesTotal(lines))} (queda por cobrar).${agotadoNote(lines)} ¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = creditoSchema.parse(args);
@@ -427,7 +451,8 @@ export const TOOLS: Record<string, Tool> = {
         throw new Error(`No tengo registrada a «${a.cliente_name}». Regístrala primero en Clientes.`);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      await reactivarPlatos(ctx, agotadoIds(lines));
       let total = 0;
       for (const it of lines) {
         const { data, error } = await ctx.db.rpc("registrar_venta_credito", {
@@ -528,14 +553,15 @@ export const TOOLS: Record<string, Tool> = {
       const a = crearCuentaSchema.parse(args);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
-      return `Crear cuenta «${a.label?.trim() || "Mesa"}»: ${listLines(lines)} = ${money(linesTotal(lines))} (pendiente de cobro). ¿Confirmo?`;
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      return `Crear cuenta «${a.label?.trim() || "Mesa"}»: ${listLines(lines)} = ${money(linesTotal(lines))} (pendiente de cobro).${agotadoNote(lines)} ¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = crearCuentaSchema.parse(args);
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Dime el precio o revísalo en el menú.`);
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
+      await reactivarPlatos(ctx, agotadoIds(lines));
       const items = toCuentaItems(lines);
       const total = itemsTotal(items);
       const label = a.label?.trim() || "Mesa";
@@ -593,22 +619,26 @@ export const TOOLS: Record<string, Tool> = {
       const a = modificarCuentaSchema.parse(args);
       const cuenta = await resolveCuenta(ctx, a.mesa);
       if (!cuenta) throw new Error(`No encontré una cuenta abierta como «${a.mesa}».`);
-      const { items, missing } = await applyCambios(ctx, cuenta, a.cambios);
+      const { items, missing, reactivar } = await applyCambios(ctx, cuenta, a.cambios);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Revísalo en el menú.`);
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
       if (items.length === 0)
         throw new Error(`Eso dejaría «${cuenta.label}» vacía. Si no se usará, mejor elimínala.`);
-      return `«${cuenta.label}» quedará: ${listLines(items)} = ${money(itemsTotal(items))}. ¿Confirmo?`;
+      const nota = reactivar.length
+        ? ` (${reactivar.map((r) => r.name).join(", ")} estaba agotado — lo reactivo)`
+        : "";
+      return `«${cuenta.label}» quedará: ${listLines(items)} = ${money(itemsTotal(items))}.${nota} ¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = modificarCuentaSchema.parse(args);
       const cuenta = await resolveCuenta(ctx, a.mesa);
       if (!cuenta) throw new Error(`No encontré una cuenta abierta como «${a.mesa}».`);
-      const { items, missing } = await applyCambios(ctx, cuenta, a.cambios);
+      const { items, missing, reactivar } = await applyCambios(ctx, cuenta, a.cambios);
       if (missing.length)
-        throw new Error(`No conozco: ${missing.join(", ")}. Revísalo en el menú.`);
+        throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
       if (items.length === 0)
         throw new Error(`Eso dejaría «${cuenta.label}» vacía. Si no se usará, mejor elimínala.`);
+      await reactivarPlatos(ctx, reactivar.map((r) => r.id));
       const total = itemsTotal(items);
       const { error } = await ctx.db
         .from("cuentas_mesa")
@@ -712,17 +742,23 @@ export const TOOLS: Record<string, Tool> = {
   },
 };
 
-/** Separa los ítems de un consumo propio: solo el plato principal es gratis. */
+/**
+ * Separa los ítems de un consumo propio: solo el PLATO PRINCIPAL del MENÚ DE HOY
+ * es gratis. Se rechazan adicionales, bebidas/productos y lo que no esté en el menú.
+ */
 async function splitConsumo(
   ctx: ToolCtx,
   items: ItemInput[],
 ): Promise<{ allowed: ResolvedLine[]; rejected: string[] }> {
+  const menu = await todayMenu(ctx);
   const allowed: ResolvedLine[] = [];
   const rejected: string[] = [];
   for (const it of items) {
-    const dish = await resolveDish(ctx, it.name);
-    if (dish && !dish.is_extra) {
-      allowed.push({ kind: "plato", id: dish.id, name: dish.name, unitPrice: 0, qty: it.qty });
+    const m = menu.find(
+      (x) => x.dishId && !x.isExtra && x.name.toLowerCase().includes(it.name.toLowerCase()),
+    );
+    if (m && m.dishId) {
+      allowed.push({ kind: "plato", id: m.dishId, name: m.name, unitPrice: 0, qty: it.qty });
     } else {
       rejected.push(it.name);
     }

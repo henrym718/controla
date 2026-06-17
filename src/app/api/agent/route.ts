@@ -31,7 +31,8 @@ function buildSystem(
     "- Usa la herramienta apenas la intención sea clara. Si falta un dato esencial, pregúntalo en una sola frase.",
     "- MULTITAREA: si la usuaria dicta varias cosas en un mensaje (ej. 'cobra un seco con una cola, y abre la mesa 4 con 2 almuerzos'), devuelve TODAS las llamadas necesarias, una por acción. No te quedes con la primera.",
     "- Agrupa en UNA sola venta/cuenta los ítems que van juntos: un mismo pedido (plato + adicional + bebida) es UNA llamada con varios items, no varias.",
-    "- PRECIOS: usa el precio del MENÚ DE HOY o de los PRODUCTOS. Si algo no está, pregunta el precio; no lo inventes.",
+    "- SOLO vendes platos del MENÚ DE HOY y productos de la lista; nunca inventes platos ni uses unos que no estén en el menú de hoy. Si no encuentras lo que piden, pide que repitan el nombre o digan a cuál plato del menú se refieren.",
+    "- AGOTADO: un plato marcado '(AGOTADO)' en el menú de hoy sigue existiendo. Si lo piden, intenta venderlo igual: la app te ofrecerá reactivarlo y registrar la venta al confirmar.",
     "- COMBO: aparece en el menú marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden solo la sopa o solo el segundo, usa el ítem individual.",
     "- ADICIONAL (huevo extra, porción) y BEBIDAS (cola, agua): son ítems más de la venta. Pueden ir en una venta normal, a crédito o en una cuenta de mesa.",
     "- VENTA AL CONTADO (efectivo) → registrar_venta.",
@@ -122,10 +123,13 @@ export async function POST(req: Request) {
 
   const menu =
     dedupeMenu(menuRows ?? [], session.shift_id)
-      .filter((m) => m.available)
       .map((m) => {
         const d = m.dishes as unknown as { name: string; is_combo: boolean; is_extra: boolean } | null;
-        const tag = d?.is_combo ? " (combo)" : d?.is_extra ? " (adicional)" : "";
+        const tags: string[] = [];
+        if (d?.is_combo) tags.push("combo");
+        else if (d?.is_extra) tags.push("adicional");
+        if (!m.available) tags.push("AGOTADO");
+        const tag = tags.length ? ` (${tags.join(", ")})` : "";
         return `- ${d?.name ?? "?"}${tag}: $${Number(m.price).toFixed(2)}`;
       })
       .join("\n") || "(sin menú fijado para este turno)";
