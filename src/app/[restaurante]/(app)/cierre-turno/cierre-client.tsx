@@ -46,6 +46,7 @@ export default function CierreClient(props: Props) {
       <RegistrarConteo
         opening={props.resumen.caja.apertura}
         cuentasMesa={props.cuentasMesa}
+        huboCredito={props.credito > 0}
         errorConteo={props.errorConteo}
       />
     );
@@ -59,10 +60,13 @@ export default function CierreClient(props: Props) {
 function RegistrarConteo({
   opening,
   cuentasMesa,
+  huboCredito,
   errorConteo,
 }: {
   opening: number;
   cuentasMesa: { count: number; total: number };
+  /** true = hubo ventas a crédito (fiado) este turno — recordar no contarlas. */
+  huboCredito?: boolean;
   errorConteo?: boolean;
 }) {
   const [counted, setCounted] = useState("");
@@ -116,6 +120,13 @@ function RegistrarConteo({
           Tu caja inicial fue <span className="font-bold">{money(opening)}</span> — ese
           dinero también va incluido en el total.
         </div>
+        {huboCredito && (
+          <div className="mt-2 rounded-2xl bg-sand px-3 py-2 text-xs">
+            🪪 Hoy fiaste (venta a crédito). <span className="font-semibold">No</span> sumes ese
+            dinero al efectivo: lo fiado se cobra después y el sistema ya lo tiene en cuenta. Cuenta
+            solo el efectivo real que hay en la caja.
+          </div>
+        )}
         <div className="mt-4">
           <Field label="Total contado en la caja">
             <Input
@@ -197,7 +208,7 @@ function CuadreWizard({
       <div className="flex flex-col gap-4">
         <PageTitle title="Resumen del cierre" subtitle="Paso 3 de 3 · Revisa y cierra" />
 
-        <DescuadreBox dif={dif} />
+        <DescuadreBox dif={dif} credito={credito} />
 
         {/* Ventas */}
         <Card className="p-4">
@@ -281,7 +292,7 @@ function CuadreWizard({
       )}
 
       {/* Resultado del cuadre — el dato clave, a color */}
-      <DescuadreBox dif={dif} />
+      <DescuadreBox dif={dif} credito={credito} />
 
       {/* Caja: esperada vs lo contado (bloqueado) */}
       <Card className="p-4">
@@ -390,8 +401,10 @@ function CuadreWizard({
 /* ----------------------------- helpers UI ------------------------------ */
 
 /** Resultado del cuadre en un solo cuadro, a color:
- *  azul = exacto · verde = sobra (excedente) · rojo = falta (descuadre). */
-function DescuadreBox({ dif }: { dif: number }) {
+ *  azul = exacto · verde = sobra (excedente) · rojo = falta (descuadre).
+ *  Si hubo ventas a crédito (fiado), explica que ESE dinero no entra a la caja
+ *  hoy y por eso no cuenta como faltante — el cuadre ya lo descontó. */
+function DescuadreBox({ dif, credito = 0 }: { dif: number; credito?: number }) {
   const cuadra = Math.abs(dif) < 0.005;
   const sobra = dif > 0.005;
   const box = cuadra
@@ -407,10 +420,32 @@ function DescuadreBox({ dif }: { dif: number }) {
       : "Hay un faltante en la caja";
 
   return (
-    <div className={`rounded-3xl p-5 text-center ${box}`}>
-      <p className={`text-sm font-semibold ${difTextClass(dif)}`}>{titulo}</p>
-      <p className={`mt-1 text-4xl font-bold ${difTextClass(dif)}`}>{money(dif)}</p>
-      <p className="mt-1 text-xs opacity-70">{sub}</p>
+    <div className="flex flex-col gap-2">
+      <div className={`rounded-3xl p-5 text-center ${box}`}>
+        <p className={`text-sm font-semibold ${difTextClass(dif)}`}>{titulo}</p>
+        <p className={`mt-1 text-4xl font-bold ${difTextClass(dif)}`}>{money(dif)}</p>
+        <p className="mt-1 text-xs opacity-70">{sub}</p>
+      </div>
+      {credito > 0 && (
+        <div className="rounded-2xl bg-sand px-4 py-3 text-xs leading-relaxed">
+          🪪 Hoy se fió <span className="font-bold">{money(credito)}</span> (venta a crédito).
+          {cuadra || sobra ? (
+            <>
+              {" "}
+              Ese dinero <span className="font-semibold">no</span> está en la caja todavía y por eso{" "}
+              <span className="font-semibold">no</span> cuenta como faltante. La caja está bien: se
+              cobra después y entrará al cuadre el día que se reciba.
+            </>
+          ) : (
+            <>
+              {" "}
+              Recuerda: lo fiado <span className="font-semibold">no</span> debe estar en la caja —
+              el cuadre ya lo descontó, así que este faltante es aparte. Si por error registraste un
+              fiado con «Cobrar ahora», avísale a la jefa.
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
