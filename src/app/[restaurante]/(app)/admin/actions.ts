@@ -449,6 +449,94 @@ export async function armarCombo(input: {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------- Editar combo (nombre, precio, activo y partes)
+//  Permite corregir un combo ya creado: cambiar nombre/precio/activo Y con qué
+//  ítems está armado. Reemplaza sus partes y recalcula su receta (= suma de las
+//  recetas de las partes), igual que el RPC armar_combo pero por ID (sin tocar
+//  migraciones). Escritura directa con el cliente admin (service_role).
+export async function actualizarCombo(
+  id: string,
+  input: {
+    parts: { dishId: string; role: "sopa" | "segundo" | "adicional" }[];
+    name: string;
+    price: number;
+    active: boolean;
+  },
+): Promise<ActionResult> {
+  const { session, db } = await admin();
+  if (!input.name.trim() || !(input.price > 0))
+    return { error: "Completa nombre y precio." };
+
+  // Partes únicas por dishId (evita duplicados si se marca el mismo ítem).
+  const seen = new Set<string>();
+  const parts = input.parts.filter(
+    (p) => p.dishId && !seen.has(p.dishId) && (seen.add(p.dishId), true),
+  );
+  if (parts.length < 2) return { error: "Un combo necesita al menos 2 ítems." };
+
+  // (1) datos básicos del combo
+  const { error: ue } = await db
+    .from("dishes")
+    .update({ name: input.name.trim(), price: input.price, active: input.active })
+    .eq("id", id)
+    .eq("restaurant_id", session.restaurant_id);
+  if (ue) return { error: ue.message };
+
+  // (2) partes del combo: reemplazo completo
+  await db
+    .from("combo_parts")
+    .delete()
+    .eq("restaurant_id", session.restaurant_id)
+    .eq("combo_dish_id", id);
+  const { error: pe } = await db.from("combo_parts").insert(
+    parts.map((p) => ({
+      restaurant_id: session.restaurant_id,
+      combo_dish_id: id,
+      part_dish_id: p.dishId,
+      role: p.role,
+    })),
+  );
+  if (pe) return { error: pe.message };
+
+  // (3) receta del combo = suma de las recetas de todas las partes
+  const partIds = parts.map((p) => p.dishId);
+  const { data: comps } = await db
+    .from("dish_components")
+    .select("ingredient_id,qty")
+    .eq("restaurant_id", session.restaurant_id)
+    .in("dish_id", partIds);
+  const agg = new Map<string, number>();
+  for (const c of comps ?? []) {
+    agg.set(c.ingredient_id, (agg.get(c.ingredient_id) ?? 0) + Number(c.qty));
+  }
+  await db
+    .from("dish_components")
+    .delete()
+    .eq("restaurant_id", session.restaurant_id)
+    .eq("dish_id", id);
+  const recipeRows = [...agg.entries()].map(([ingredient_id, qty]) => ({
+    restaurant_id: session.restaurant_id,
+    dish_id: id,
+    ingredient_id,
+    qty,
+  }));
+  if (recipeRows.length) {
+    const { error: re } = await db.from("dish_components").insert(recipeRows);
+    if (re) return { error: re.message };
+  }
+
+  await logAdmin(
+    session,
+    db,
+    "plato_config",
+    `Editó el combo ${input.name} (${money(input.price)}, ${parts.length} ítems${input.active ? "" : ", inactivo"})`,
+    { combo: input.name, parts: parts.length, price: input.price, active: input.active },
+  );
+  revalidatePath(`/${session.slug}/catalogo`);
+  revalidatePath(`/${session.slug}/menu/editar`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- Receta de un plato (insumos que lleva)
 //  Asigna del inventario qué consume cada plato (proteína, pan, queso…). Los
 //  contables se descuentan al vender; los granel marcan que el plato participa

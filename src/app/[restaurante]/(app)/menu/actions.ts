@@ -7,6 +7,7 @@ import { businessDate } from "@/lib/shifts";
 import { allDayShiftId } from "@/lib/menu";
 import { logActivity, type EventCode } from "@/lib/activity";
 import type { SessionClaims } from "@/lib/auth/jwt";
+import type { Json } from "@/lib/supabase/database.types";
 
 export interface ActionResult {
   error?: string;
@@ -124,6 +125,90 @@ export async function agregarVariosAlMenu(input: {
   );
   revalidateMenu(session.slug);
   return { ok: true, count: rows.length };
+}
+
+// Crea un combo (en el catálogo) sin salir del editor de menú y, si se indica
+// precio, lo deja agregado al menú del día — así no hay que ir a Catálogo, crear
+// el combo y volver. Solo admin. Reusa el RPC armar_combo (el mismo del catálogo).
+export async function crearComboEnMenu(input: {
+  parts: { dishId: string; role: "sopa" | "segundo" | "adicional" }[];
+  name?: string;
+  price?: number | null;
+  date?: string;
+}): Promise<ActionResult> {
+  const { session, db } = await ctx();
+  if (session.user_role !== "admin")
+    return { error: "Solo la administradora puede crear combos." };
+  const parts = (input.parts ?? []).filter((p) => p.dishId);
+  if (parts.length < 2) return { error: "Un combo necesita al menos 2 ítems." };
+
+  const { data, error } = await db.rpc("armar_combo", {
+    p_restaurant: session.restaurant_id,
+    p_parts: parts.map((p) => ({ dish_id: p.dishId, role: p.role })) as unknown as Json,
+    p_name: input.name?.trim() || undefined,
+    p_price: input.price ?? undefined,
+    p_user: session.user_id,
+  });
+  if (error) return { error: error.message };
+
+  const combo = data as { combo_dish_id?: string; name?: string } | null;
+
+  // Con precio: lo dejamos listo en el menú del día (el objetivo: no salir del
+  // editor). Sin precio: queda solo creado en el catálogo para agregarlo a mano.
+  if (combo?.combo_dish_id && input.price && input.price > 0) {
+    const t = await menuTarget(session, db, input.date);
+    await db.from("daily_menu").upsert(
+      {
+        restaurant_id: session.restaurant_id,
+        business_date: t.date,
+        shift_id: t.shiftId,
+        dish_id: combo.combo_dish_id,
+        price: input.price,
+        available: true,
+      },
+      { onConflict: "restaurant_id,business_date,shift_id,dish_id" },
+    );
+  }
+
+  await logMenu(
+    session,
+    db,
+    "menu",
+    `Creó el combo ${combo?.name ?? "nuevo"}${input.price && input.price > 0 ? ` y lo agregó al menú (${money(input.price)})` : ""}`,
+    { combo: combo?.name, parts: parts.length, price: input.price ?? null },
+  );
+  revalidateMenu(session.slug);
+  revalidatePath(`/${session.slug}/catalogo`);
+  return { ok: true };
+}
+
+// Fija el orden del menú del día (sort_order = posición en la lista). El mismo
+// orden lo leen el board "/menu" y "Registrar venta" (/vender), que ya ordenan
+// por sort_order — así el orden es único y estándar para todos.
+export async function reordenarMenu(input: {
+  dishIds: string[];
+  date?: string;
+}): Promise<ActionResult> {
+  const { session, db } = await ctx();
+  const ids = input.dishIds ?? [];
+  if (ids.length === 0) return { error: "No hay nada que ordenar." };
+  const t = await menuTarget(session, db, input.date);
+  const results = await Promise.all(
+    ids.map((dishId, i) =>
+      db
+        .from("daily_menu")
+        .update({ sort_order: i })
+        .eq("restaurant_id", session.restaurant_id)
+        .eq("business_date", t.date)
+        .eq("shift_id", t.shiftId)
+        .eq("dish_id", dishId),
+    ),
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { error: failed.error.message };
+  revalidateMenu(session.slug);
+  revalidatePath(`/${session.slug}/vender`);
+  return { ok: true };
 }
 
 export async function quitarDelMenu(input: {

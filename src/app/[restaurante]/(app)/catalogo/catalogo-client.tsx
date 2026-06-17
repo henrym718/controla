@@ -14,6 +14,7 @@ import {
   armarCombo,
   crearAdicional,
   actualizarPlato,
+  actualizarCombo,
   eliminarPlato,
   setReceta,
 } from "../admin/actions";
@@ -220,7 +221,14 @@ export default function CatalogoClient({
         />
       )}
       {editDish && (
-        <EditDishModal dish={editDish} slug={slug} onClose={() => setEditDish(null)} />
+        <EditDishModal
+          dish={editDish}
+          slug={slug}
+          platos={platos}
+          adicionales={adicionales}
+          comboParts={parts.filter((p) => p.comboId === editDish.id)}
+          onClose={() => setEditDish(null)}
+        />
       )}
     </div>
   );
@@ -587,21 +595,69 @@ function FormAdicional({ contables, onDone }: { contables: Ingredient[]; onDone:
   );
 }
 
-// --------------------------------------------------------------------------- Editar plato
-function EditDishModal({ dish, slug, onClose }: { dish: Dish; slug: string; onClose: () => void }) {
+// --------------------------------------------------------------------------- Editar plato / combo
+//  Para combos, además de nombre/precio/activo, permite cambiar CON QUÉ ítems
+//  está armado (sopas, platos y/o adicionales). Al guardar se recalculan partes
+//  y receta vía actualizarCombo.
+function EditDishModal({
+  dish,
+  slug,
+  platos,
+  adicionales,
+  comboParts,
+  onClose,
+}: {
+  dish: Dish;
+  slug: string;
+  platos: Dish[];
+  adicionales: Dish[];
+  comboParts: Part[];
+  onClose: () => void;
+}) {
   const isPlato = !dish.isCombo && !dish.isExtra;
+  const isCombo = dish.isCombo;
   const [name, setName] = useState(dish.name);
   const [price, setPrice] = useState(String(dish.price));
   const [active, setActive] = useState(dish.active);
   const [category, setCategory] = useState<"principal" | "sopa">(
     dish.category === "sopa" ? "sopa" : "principal",
   );
+  const [sel, setSel] = useState<Set<string>>(() => new Set(comboParts.map((p) => p.partId)));
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  const sopas = platos.filter((d) => d.category === "sopa");
+  const principales = platos.filter((d) => d.category !== "sopa");
+  const toggle = (id: string) =>
+    setSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const roleOf = (d: Dish): "sopa" | "segundo" | "adicional" =>
+    d.isExtra ? "adicional" : d.category === "sopa" ? "sopa" : "segundo";
 
   const save = () => {
     setMsg(null);
     if (!name.trim() || !(Number(price) > 0)) return setMsg("Completa nombre y precio.");
+    if (isCombo) {
+      if (sel.size < 2) return setMsg("El combo necesita al menos 2 ítems.");
+      const parts = [...platos, ...adicionales]
+        .filter((d) => sel.has(d.id))
+        .map((d) => ({ dishId: d.id, role: roleOf(d) }));
+      start(async () => {
+        const r = await actualizarCombo(dish.id, {
+          parts,
+          name: name.trim(),
+          price: Number(price),
+          active,
+        });
+        if (r.error) setMsg(r.error);
+        else onClose();
+      });
+      return;
+    }
     start(async () => {
       const r = await actualizarPlato(dish.id, {
         name: name.trim(),
@@ -616,7 +672,7 @@ function EditDishModal({ dish, slug, onClose }: { dish: Dish; slug: string; onCl
 
   return (
     <div className={overlay}>
-      <div className="w-full max-w-sm rounded-3xl bg-white p-5">
+      <div className={sheet}>
         <p className="text-lg font-bold">
           Editar {dish.isCombo ? "combo" : dish.isExtra ? "adicional" : "plato"}
         </p>
@@ -624,10 +680,23 @@ function EditDishModal({ dish, slug, onClose }: { dish: Dish; slug: string; onCl
           <Field label="Nombre">
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Precio individual">
+          <Field label={isCombo ? "Precio del combo" : "Precio individual"}>
             <Input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" />
           </Field>
           {isPlato && <CategoryPicker value={category} onChange={setCategory} />}
+          {isCombo && (
+            <div className="flex flex-col gap-3 rounded-2xl bg-ink/[0.03] p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-50">
+                Ítems del combo (mínimo 2)
+              </p>
+              <ComboPick title="Sopas" items={sopas} sel={sel} onToggle={toggle} />
+              <ComboPick title="Platos principales" items={principales} sel={sel} onToggle={toggle} />
+              <ComboPick title="Adicionales" items={adicionales} sel={sel} onToggle={toggle} />
+              <p className="text-xs opacity-60">
+                Al guardar, la receta y el costo del combo se recalculan según los ítems marcados.
+              </p>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
