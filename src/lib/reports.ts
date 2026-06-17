@@ -382,10 +382,12 @@ export interface DaySalida {
   detalle: string | null; // ej. cantidad + unidad para compras
   monto: number;
   fuente: "caja" | "jefa";
+  responsable: string | null; // quién lo registró
 }
 export interface DaySalidas {
   date: string;
-  total: number;
+  total: number; // lo que salió de caja ese día
+  entro: number; // lo que entró ese día (ventas + aportes + ingresos de capital)
   items: DaySalida[];
 }
 
@@ -394,19 +396,31 @@ export async function computeDaySalidas(
   restaurantId: string,
   date: string,
 ): Promise<DaySalidas> {
-  const [{ data: expenses }, { data: moves }, { data: sessions }] = await Promise.all([
-    db.from("expenses").select("amount,category,note,op_id")
-      .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
-    db.from("inventory_movements").select("qty,unit_cost,op_id, ingredients(name,consumption_unit)")
-      .eq("restaurant_id", restaurantId).eq("business_date", date).eq("type", "compra").is("voided_at", null),
-    db.from("shift_sessions").select("id").eq("restaurant_id", restaurantId).eq("business_date", date),
-  ]);
+  const [{ data: expenses }, { data: moves }, { data: sessions }, { data: sales }, { data: capital }, { data: users }] =
+    await Promise.all([
+      db.from("expenses").select("amount,category,note,op_id,user_id")
+        .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null),
+      db.from("inventory_movements").select("qty,unit_cost,op_id,user_id, ingredients(name,consumption_unit)")
+        .eq("restaurant_id", restaurantId).eq("business_date", date).eq("type", "compra").is("voided_at", null),
+      db.from("shift_sessions").select("id").eq("restaurant_id", restaurantId).eq("business_date", date),
+      // Solo ventas que trajeron dinero (excluye crédito/fiado): el cobro del
+      // fiado entra después como ingreso de caja y ya se cuenta en `aportes`.
+      db.from("sales").select("total")
+        .eq("restaurant_id", restaurantId).eq("business_date", date).is("voided_at", null).eq("consumo_interno", false)
+        .neq("payment_method", "credito"),
+      db.from("capital_movements").select("type,amount")
+        .eq("restaurant_id", restaurantId).eq("business_date", date),
+      db.from("users").select("id,name").eq("restaurant_id", restaurantId),
+    ]);
+
+  const userName = new Map((users ?? []).map((u) => [u.id, u.name]));
+  const who = (id: string | null | undefined) => (id ? userName.get(id) ?? null : null);
 
   const sessionIds = (sessions ?? []).map((s) => s.id);
   const { data: cash } = sessionIds.length
-    ? await db.from("cash_movements").select("type,amount,reason,op_id")
+    ? await db.from("cash_movements").select("type,amount,reason,op_id,user_id")
         .in("shift_session_id", sessionIds).is("voided_at", null)
-    : { data: [] as { type: string; amount: number; reason: string | null; op_id: string | null }[] };
+    : { data: [] as { type: string; amount: number; reason: string | null; op_id: string | null; user_id: string | null }[] };
 
   // Una operación la "puso la jefa" si tiene un ingreso de caja con el mismo op_id.
   const jefaOps = new Set(
@@ -424,6 +438,7 @@ export async function computeDaySalidas(
       detalle: null,
       monto: Number(e.amount),
       fuente: e.op_id && jefaOps.has(e.op_id) ? "jefa" : "caja",
+      responsable: who(e.user_id),
     });
   }
 
@@ -436,6 +451,7 @@ export async function computeDaySalidas(
       detalle: `${qty}${ing?.consumption_unit ? ` ${ing.consumption_unit}` : ""}`,
       monto: qty * Number(m.unit_cost),
       fuente: m.op_id && jefaOps.has(m.op_id) ? "jefa" : "caja",
+      responsable: who(m.user_id),
     });
   }
 
@@ -449,12 +465,94 @@ export async function computeDaySalidas(
       detalle: null,
       monto: Number(c.amount),
       fuente: c.op_id && jefaOps.has(c.op_id) ? "jefa" : "caja",
+      responsable: who(c.user_id),
     });
   }
 
   items.sort((a, b) => b.monto - a.monto);
   const total = items.reduce((s, i) => s + i.monto, 0);
-  return { date, total, items };
+
+  // Entró: ventas del día (todas) + aportes de caja + ingresos de capital del día.
+  const ventasDia = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  const aportes = (cash ?? []).filter((c) => c.type === "ingreso").reduce((s, c) => s + Number(c.amount), 0);
+  const ingresosCapital = (capital ?? []).filter((c) => c.type === "ingreso").reduce((s, c) => s + Number(c.amount), 0);
+  const entro = ventasDia + aportes + ingresosCapital;
+
+  return { date, total, entro, items };
+}
+
+// ===========================================================================
+//  FLUJO DE CAJA DEL NEGOCIO (capital acumulado — todo el histórico)
+//  "El dinero que queda" = lo que entró − lo que salió ± cuadres. Es el capital
+//  con el que trabaja el negocio y que se le entrega a la dueña.
+// ===========================================================================
+export interface FlujoCaja {
+  ventas: number; // ventas cobradas (efectivo + transferencia + otro), sin crédito ni consumo interno
+  aportes: number; // ingresos de caja del turno (la jefa puso plata en una operación)
+  ingresosCapital: number; // ingresos de capital registrados (la jefa manda plata)
+  compras: number; // compras de inventario
+  gastos: number; // gastos del día
+  retirosCaja: number; // egresos de caja que no son compras (retiros varios)
+  retirosCapital: number; // entregas a la dueña registradas
+  ajusteCuadres: number; // Σ descuadre de cierres (excedente + / faltante −)
+  capital: number; // = entradas − salidas + ajusteCuadres
+}
+
+export async function computeFlujoCaja(db: Db, restaurantId: string): Promise<FlujoCaja> {
+  const [
+    { data: sales },
+    { data: moves },
+    { data: expenses },
+    { data: cash },
+    { data: capital },
+    { data: sessions },
+  ] = await Promise.all([
+    // Ventas que SÍ trajeron dinero: excluye crédito (fiado). El fiado no entra
+    // como plata; cuando se cobra llega como ingreso de caja ('cobro_credito')
+    // y se cuenta en `aportes`. Sumarlo aquí lo contaría doble / antes de tiempo.
+    db.from("sales").select("total")
+      .eq("restaurant_id", restaurantId).is("voided_at", null).eq("consumo_interno", false)
+      .neq("payment_method", "credito"),
+    db.from("inventory_movements").select("qty,unit_cost,op_id")
+      .eq("restaurant_id", restaurantId).eq("type", "compra").is("voided_at", null),
+    db.from("expenses").select("amount")
+      .eq("restaurant_id", restaurantId).is("voided_at", null),
+    db.from("cash_movements").select("type,amount,op_id")
+      .eq("restaurant_id", restaurantId).is("voided_at", null),
+    db.from("capital_movements").select("type,amount").eq("restaurant_id", restaurantId),
+    db.from("shift_sessions").select("cash_discrepancy,status").eq("restaurant_id", restaurantId).eq("status", "closed"),
+  ]);
+
+  const ventas = (sales ?? []).reduce((s, v) => s + Number(v.total), 0);
+  const compras = (moves ?? []).reduce((s, m) => s + Math.abs(Number(m.qty)) * Number(m.unit_cost), 0);
+  const gastos = (expenses ?? []).reduce((s, e) => s + Number(e.amount), 0);
+
+  // op_ids de compras: los egresos de caja con ese op_id ya están en `compras`.
+  const compraOps = new Set((moves ?? []).map((m) => m.op_id).filter(Boolean) as string[]);
+  const aportes = (cash ?? []).filter((c) => c.type === "ingreso").reduce((s, c) => s + Number(c.amount), 0);
+  const retirosCaja = (cash ?? [])
+    .filter((c) => c.type === "egreso" && !(c.op_id && compraOps.has(c.op_id)))
+    .reduce((s, c) => s + Number(c.amount), 0);
+
+  const ingresosCapital = (capital ?? []).filter((c) => c.type === "ingreso").reduce((s, c) => s + Number(c.amount), 0);
+  const retirosCapital = (capital ?? []).filter((c) => c.type === "retiro").reduce((s, c) => s + Number(c.amount), 0);
+
+  const ajusteCuadres = (sessions ?? []).reduce((s, x) => s + Number(x.cash_discrepancy ?? 0), 0);
+
+  const capitalTotal =
+    ventas + aportes + ingresosCapital - compras - gastos - retirosCaja - retirosCapital + ajusteCuadres;
+
+  return {
+    ventas,
+    aportes,
+    ingresosCapital,
+    compras,
+    gastos,
+    retirosCaja,
+    retirosCapital,
+    ajusteCuadres,
+    capital: capitalTotal,
+  };
 }
 
 // ===========================================================================

@@ -816,6 +816,43 @@ export async function agregarProductoInventario(input: {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------- Flujo de caja: ingreso/retiro de capital del negocio
+//  Movimiento a nivel negocio (no del turno): la jefa mete plata ('ingreso') o
+//  se le entrega a la dueña ('retiro', baja el capital). Ver computeFlujoCaja.
+export async function registrarMovimientoCapital(input: {
+  type: "ingreso" | "retiro";
+  amount: number;
+  reason?: string | null;
+}): Promise<ActionResult> {
+  const { session, db } = await admin();
+  const type = input.type === "retiro" ? "retiro" : "ingreso";
+  const amount = Number(input.amount) || 0;
+  if (!(amount > 0)) return { error: "Indica un monto mayor a 0." };
+
+  const { error } = await db.from("capital_movements").insert({
+    restaurant_id: session.restaurant_id,
+    user_id: session.user_id,
+    type,
+    amount,
+    reason: input.reason?.trim() || null,
+    business_date: businessDate(),
+  });
+  if (error) return { error: error.message };
+
+  await logAdmin(
+    session,
+    db,
+    type === "ingreso" ? "ingreso_caja" : "egreso_caja",
+    type === "ingreso"
+      ? `Ingreso de capital: ${money(amount)}${input.reason ? ` — ${input.reason}` : ""}`
+      : `Retiro de capital (a la dueña): ${money(amount)}${input.reason ? ` — ${input.reason}` : ""}`,
+    { amount, reason: input.reason ?? null, flujo: type },
+  );
+
+  revalidatePath(`/${session.slug}/salidas-caja`);
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- Cambiar el comportamiento de un insumo (consumo ↔ venta)
 //  El switch del inventario. visible = "la cocinera registra" (granel/pool);
 //  !visible = "se descuenta al vender" (contable/receta). Cambia kind a la par.

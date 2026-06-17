@@ -217,6 +217,54 @@ export type Database = {
         }
         Relationships: []
       }
+      capital_movements: {
+        Row: {
+          amount: number
+          business_date: string
+          created_at: string
+          id: string
+          reason: string | null
+          restaurant_id: string
+          type: string
+          user_id: string | null
+        }
+        Insert: {
+          amount: number
+          business_date?: string
+          created_at?: string
+          id?: string
+          reason?: string | null
+          restaurant_id: string
+          type: string
+          user_id?: string | null
+        }
+        Update: {
+          amount?: number
+          business_date?: string
+          created_at?: string
+          id?: string
+          reason?: string | null
+          restaurant_id?: string
+          type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "capital_movements_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "capital_movements_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_movements: {
         Row: {
           amount: number
