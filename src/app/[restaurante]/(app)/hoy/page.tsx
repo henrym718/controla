@@ -118,12 +118,36 @@ export default async function HoyPage({
         </span>
       </Link>
 
-      <Link href={`/${restaurante}/consumo`} className="rounded-3xl bg-lav p-5">
-        <span className="block text-lg font-bold leading-tight">Registrar consumo de cocina</span>
-        <span className="mt-0.5 block text-sm opacity-60">
-          Lo que usaste para cocinar
-        </span>
-      </Link>
+      <div className="relative overflow-hidden rounded-3xl bg-lav">
+        <Link href={`/${restaurante}/consumo`} className="block p-5 pr-20">
+          <span className="block text-lg font-bold leading-tight">Registrar consumo de cocina</span>
+          <span className="mt-0.5 block text-sm opacity-60">
+            Lo que usaste para cocinar
+          </span>
+        </Link>
+        {/* Atajo al asistente de voz de cocina: toca el micrófono para registrar
+            el consumo hablando; el resto de la card va al registro manual. */}
+        <Link
+          href={`/${restaurante}/capturar-consumo`}
+          aria-label="Registrar consumo de cocina por voz"
+          className="absolute right-4 top-1/2 z-10 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-full bg-ink text-white shadow-md transition active:scale-95"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-6 w-6"
+          >
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <line x1="12" y1="18" x2="12" y2="21" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+          </svg>
+        </Link>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Link

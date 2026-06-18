@@ -128,11 +128,23 @@ export default async function VenderPage({
 
   const cuentasAbiertas = (cuentas ?? []).map((c) => {
     const items = (c.items as unknown as CuentaItemRow[]) ?? [];
+    // Acumula por producto (mismo plato/producto suma cantidades), conservando
+    // el orden en que se agregaron: así la cuenta muestra "2 × Bandeja" en vez
+    // de repetir la misma línea, sin precios individuales.
+    const grouped = new Map<string, { key: string; name: string; qty: number }>();
+    for (const i of items) {
+      const k = `${i.kind}:${i.ref_id}`;
+      const prev = grouped.get(k);
+      if (prev) prev.qty += Number(i.qty);
+      else grouped.set(k, { key: k, name: i.name, qty: Number(i.qty) });
+    }
+    const lineas = [...grouped.values()];
     return {
       id: c.id,
       label: c.label,
       total: Number(c.total),
-      count: items.reduce((s, i) => s + Number(i.qty), 0),
+      count: lineas.reduce((s, i) => s + i.qty, 0),
+      items: lineas,
     };
   });
 
