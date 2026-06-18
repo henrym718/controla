@@ -102,6 +102,54 @@ interface ResolvedLine {
   agotado?: boolean;
 }
 
+type MenuEntry = Awaited<ReturnType<typeof todayMenu>>[number];
+
+const STOP_WORDS = new Set([
+  "de", "con", "y", "e", "o", "u", "del", "la", "el", "los", "las",
+  "un", "una", "unos", "unas", "por", "para", "a", "al", "sin", "mas",
+  "más", "combo", "completo", "sencillo", "plato",
+]);
+
+/** Palabras significativas de un nombre (sin tildes, sin signos, sin muletillas). */
+function tokenize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9ñ\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+}
+
+/**
+ * Empareja lo dictado con el mejor plato del menú de hoy por COINCIDENCIA DE
+ * PALABRAS (no por substring exacto): así "Completo: seco de pollo + sopa" calza
+ * con el plato "Seco de pollo" aunque el texto dictado sea más largo. Prefiere el
+ * candidato cuyas palabras estén todas cubiertas (combo corto) y desempata por
+ * cuántas palabras comparte.
+ */
+function bestMenuMatch(menu: MenuEntry[], name: string): MenuEntry | null {
+  const q = tokenize(name);
+  if (q.length === 0) return null;
+  let best: MenuEntry | null = null;
+  let bestRatio = 0;
+  let bestShared = 0;
+  for (const m of menu) {
+    if (!m.dishId) continue;
+    const c = tokenize(m.name);
+    if (c.length === 0) continue;
+    const shared = c.filter((w) => q.includes(w)).length;
+    if (shared === 0) continue;
+    const ratio = shared / c.length; // qué tan "limpio" es el candidato
+    if (ratio > bestRatio || (ratio === bestRatio && shared > bestShared)) {
+      best = m;
+      bestRatio = ratio;
+      bestShared = shared;
+    }
+  }
+  return best;
+}
+
 /**
  * Resuelve lo que se vende: primero un PRODUCTO vendible del inventario (cola,
  * agua), si no, un PLATO del MENÚ DE HOY. NO cae al catálogo general: si el plato
@@ -121,7 +169,7 @@ async function resolveSaleTarget(
     return { kind: "producto", id: prod.id, name: prod.name, unitPrice: price, qty: 1 };
   }
   const menu = await todayMenu(ctx);
-  const m = menu.find((x) => x.dishId && x.name.toLowerCase().includes(name.toLowerCase()));
+  const m = bestMenuMatch(menu, name);
   if (m && m.dishId) {
     return {
       kind: "plato",
@@ -140,10 +188,10 @@ async function resolveSaleTarget(
   return null;
 }
 
-/** Nombres de platos agotados en una lista (para avisar antes de confirmar). */
+/** Línea de aviso de platos agotados que se reactivarán (vacía si no hay). */
 const agotadoNote = (lines: ResolvedLine[]): string => {
   const a = lines.filter((l) => l.agotado).map((l) => l.name);
-  return a.length ? ` (${a.join(", ")} estaba agotado hoy — lo reactivo y registro)` : "";
+  return a.length ? `\n⚠️ ${a.join(", ")} estaba agotado — lo reactivo y registro` : "";
 };
 
 /** Reactiva en el menú de hoy los platos que estaban agotados antes de venderlos. */
@@ -270,8 +318,21 @@ const itemsTotal = (items: { unit_price: number; qty: number }[]) =>
   items.reduce((s, i) => s + i.unit_price * i.qty, 0);
 const linesTotal = (lines: ResolvedLine[]) =>
   lines.reduce((s, l) => s + l.unitPrice * l.qty, 0);
-const listLines = (lines: { name: string; qty: number }[]) =>
-  lines.map((l) => `${l.qty} × ${l.name}`).join(", ");
+
+/** Una fila por ítem, en su propia línea: "•  2 × Seco de pollo  —  $3.00". */
+const rowsBlock = (rows: { name: string; qty: number; amount?: number }[]): string =>
+  rows
+    .map((r) => `•  ${r.qty} × ${r.name}` + (r.amount != null ? `  —  ${money(r.amount)}` : ""))
+    .join("\n");
+const lineRows = (lines: ResolvedLine[], withPrice = true) =>
+  lines.map((l) => ({
+    name: l.name,
+    qty: l.qty,
+    amount: withPrice ? l.unitPrice * l.qty : undefined,
+  }));
+const cuentaRows = (items: CuentaItem[]) =>
+  items.map((i) => ({ name: i.name, qty: i.qty, amount: i.unit_price * i.qty }));
+const totalLine = (n: number) => `Total: ${money(n)}`;
 
 /** Registra el evento en la bitácora (toda acción de la IA es source 'ia'). */
 async function logEvent(
@@ -400,7 +461,7 @@ export const TOOLS: Record<string, Tool> = {
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
         throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
-      return `Registrar venta (efectivo): ${listLines(lines)} = ${money(linesTotal(lines))}.${agotadoNote(lines)} ¿Confirmo?`;
+      return `🧾 Venta al contado (efectivo)\n${rowsBlock(lineRows(lines))}\n${totalLine(linesTotal(lines))}${agotadoNote(lines)}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = ventaSchema.parse(args);
@@ -437,7 +498,7 @@ export const TOOLS: Record<string, Tool> = {
           d?.op_id ?? null,
         );
       }
-      return { message: `✅ Venta registrada: ${listLines(lines)} = ${money(total)}.` };
+      return { message: `✅ Venta registrada (efectivo)\n${rowsBlock(lineRows(lines))}\n${totalLine(total)}` };
     },
   },
 
@@ -464,7 +525,7 @@ export const TOOLS: Record<string, Tool> = {
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
         throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
-      return `Fiar a «${cliente.name}»: ${listLines(lines)} = ${money(linesTotal(lines))} (queda por cobrar).${agotadoNote(lines)} ¿Confirmo?`;
+      return `💳 Venta a crédito (fiado a ${cliente.name})\n${rowsBlock(lineRows(lines))}\n${totalLine(linesTotal(lines))}\nQueda por cobrar.${agotadoNote(lines)}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = creditoSchema.parse(args);
@@ -503,7 +564,7 @@ export const TOOLS: Record<string, Tool> = {
           d?.op_id ?? null,
         );
       }
-      return { message: `✅ Fiado a ${cliente.name}: ${listLines(lines)} = ${money(total)}.` };
+      return { message: `✅ Fiado a ${cliente.name}\n${rowsBlock(lineRows(lines))}\n${totalLine(total)}` };
     },
   },
 
@@ -524,8 +585,10 @@ export const TOOLS: Record<string, Tool> = {
       const { allowed, rejected } = await splitConsumo(ctx, a.items);
       if (allowed.length === 0)
         throw new Error("El consumo de empleada es solo para el plato principal (no adicionales ni bebidas).");
-      const nota = rejected.length ? ` (No incluye: ${rejected.join(", ")} — solo el plato principal es gratis)` : "";
-      return `Consumo de empleada (${ctx.session.user_name}): ${listLines(allowed)}, gratis.${nota} ¿Confirmo?`;
+      const nota = rejected.length
+        ? `\n\nNo incluí (solo el plato principal es gratis):\n${rowsBlock(rejected.map((r) => ({ name: r, qty: 1 })))}`
+        : "";
+      return `🍽️ Consumo de empleada — ${ctx.session.user_name} (gratis)\n${rowsBlock(lineRows(allowed, false))}${nota}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = consumoSchema.parse(args);
@@ -551,8 +614,10 @@ export const TOOLS: Record<string, Tool> = {
           (data as { op_id?: string } | null)?.op_id ?? null,
         );
       }
-      const nota = rejected.length ? ` (no incluí: ${rejected.join(", ")})` : "";
-      return { message: `✅ Consumo de ${ctx.session.user_name}: ${listLines(allowed)}.${nota}` };
+      const nota = rejected.length ? `\n(no incluí: ${rejected.join(", ")})` : "";
+      return {
+        message: `✅ Consumo de ${ctx.session.user_name} (gratis)\n${rowsBlock(lineRows(allowed, false))}${nota}`,
+      };
     },
   },
 
@@ -576,7 +641,7 @@ export const TOOLS: Record<string, Tool> = {
       const { lines, missing } = await resolveItems(ctx, a.items);
       if (missing.length)
         throw new Error(`No encontré en el menú de hoy: ${missing.join(", ")}. Dime bien el nombre o a cuál plato del menú te refieres.`);
-      return `Crear cuenta «${a.label?.trim() || "Mesa"}»: ${listLines(lines)} = ${money(linesTotal(lines))} (pendiente de cobro).${agotadoNote(lines)} ¿Confirmo?`;
+      return `🪑 Nueva cuenta «${a.label?.trim() || "Mesa"}» (pendiente de cobro)\n${rowsBlock(lineRows(lines))}\n${totalLine(linesTotal(lines))}${agotadoNote(lines)}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = crearCuentaSchema.parse(args);
@@ -603,7 +668,9 @@ export const TOOLS: Record<string, Tool> = {
         total,
         count: items.length,
       });
-      return { message: `✅ Cuenta «${label}» abierta: ${listLines(lines)} = ${money(total)}.` };
+      return {
+        message: `✅ Cuenta «${label}» abierta (pendiente de cobro)\n${rowsBlock(lineRows(lines))}\n${totalLine(total)}`,
+      };
     },
   },
 
@@ -647,9 +714,9 @@ export const TOOLS: Record<string, Tool> = {
       if (items.length === 0)
         throw new Error(`Eso dejaría «${cuenta.label}» vacía. Si no se usará, mejor elimínala.`);
       const nota = reactivar.length
-        ? ` (${reactivar.map((r) => r.name).join(", ")} estaba agotado — lo reactivo)`
+        ? `\n⚠️ ${reactivar.map((r) => r.name).join(", ")} estaba agotado — lo reactivo`
         : "";
-      return `«${cuenta.label}» quedará: ${listLines(items)} = ${money(itemsTotal(items))}.${nota} ¿Confirmo?`;
+      return `✏️ «${cuenta.label}» quedará:\n${rowsBlock(cuentaRows(items))}\n${totalLine(itemsTotal(items))}${nota}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = modificarCuentaSchema.parse(args);
@@ -679,7 +746,9 @@ export const TOOLS: Record<string, Tool> = {
         total,
         count: items.length,
       });
-      return { message: `✅ «${cuenta.label}» actualizada: ${listLines(items)} = ${money(total)}.` };
+      return {
+        message: `✅ «${cuenta.label}» actualizada\n${rowsBlock(cuentaRows(items))}\n${totalLine(total)}`,
+      };
     },
   },
 
@@ -698,7 +767,7 @@ export const TOOLS: Record<string, Tool> = {
       const a = cobrarCuentaSchema.parse(args);
       const cuenta = await resolveCuenta(ctx, a.mesa);
       if (!cuenta) throw new Error(`No encontré una cuenta abierta como «${a.mesa}».`);
-      return `Cobrar «${cuenta.label}»: ${listLines(cuenta.items)} = ${money(cuenta.total)} (efectivo). ¿Confirmo?`;
+      return `💵 Cobrar «${cuenta.label}» (efectivo)\n${rowsBlock(cuentaRows(cuenta.items))}\n${totalLine(cuenta.total)}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = cobrarCuentaSchema.parse(args);
@@ -722,7 +791,9 @@ export const TOOLS: Record<string, Tool> = {
         { mesa: true, label: cuenta.label, total, count: Number(d?.count ?? cuenta.items.length) },
         d?.op_id ?? null,
       );
-      return { message: `✅ Cuenta «${cuenta.label}» cobrada: ${money(total)}.` };
+      return {
+        message: `✅ «${cuenta.label}» cobrada\n${rowsBlock(cuentaRows(cuenta.items))}\n${totalLine(total)}`,
+      };
     },
   },
 
@@ -741,7 +812,7 @@ export const TOOLS: Record<string, Tool> = {
       const a = eliminarCuentaSchema.parse(args);
       const cuenta = await resolveCuenta(ctx, a.mesa);
       if (!cuenta) throw new Error(`No encontré una cuenta abierta como «${a.mesa}».`);
-      return `Eliminar la cuenta «${cuenta.label}» (${money(cuenta.total)}) sin cobrar. ¿Confirmo?`;
+      return `🗑️ Eliminar «${cuenta.label}» (sin cobrar)\n${rowsBlock(cuentaRows(cuenta.items))}\n${totalLine(cuenta.total)}\n\n¿Confirmo?`;
     },
     execute: async (args, ctx) => {
       const a = eliminarCuentaSchema.parse(args);

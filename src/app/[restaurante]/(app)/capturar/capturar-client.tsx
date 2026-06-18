@@ -160,7 +160,7 @@ export default function CapturarClient({
         {confirmaciones.map((c) => (
           <div
             key={c.id}
-            className={`float-in w-full max-w-sm rounded-2xl px-4 py-3 text-sm font-medium ${
+            className={`float-in w-full max-w-sm whitespace-pre-line rounded-2xl px-4 py-3 text-left text-base font-medium leading-relaxed ${
               c.ok ? "bg-teal/20 text-teal" : "bg-coral/20 text-coral"
             }`}
           >
@@ -174,7 +174,7 @@ export default function CapturarClient({
 
         {pending.length > 0 ? (
           <div className="float-in mt-1 w-full max-w-sm rounded-3xl bg-white/10 p-4 text-center">
-            <p className="whitespace-pre-line text-left text-base">{reply}</p>
+            <p className="whitespace-pre-line text-left text-lg leading-relaxed">{reply}</p>
             <div className="mt-3 flex gap-2">
               <button
                 onClick={confirm}
@@ -191,7 +191,9 @@ export default function CapturarClient({
             </div>
           </div>
         ) : reply ? (
-          <p className="mt-1 max-w-sm text-center text-lg text-white">{reply}</p>
+          <p className="mt-1 max-w-sm whitespace-pre-line text-center text-lg leading-relaxed text-white">
+            {reply}
+          </p>
         ) : null}
       </div>
 
