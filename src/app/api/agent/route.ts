@@ -35,6 +35,7 @@ function buildSystem(
     "- SOLO vendes platos del MENÚ DE HOY y productos de la lista; nunca inventes platos ni uses unos que no estén en el menú de hoy. Si no encuentras lo que piden, pide que repitan el nombre o digan a cuál plato del menú se refieren.",
     "- AGOTADO: un plato marcado '(AGOTADO)' en el menú de hoy sigue existiendo. Si lo piden, intenta venderlo igual: la app te ofrecerá reactivarlo y registrar la venta al confirmar.",
     "- COMBO: aparece en el MENÚ DE HOY marcado '(combo)'. Si piden el combo, véndelo con su precio. Si piden solo la sopa o solo el segundo, usa el ítem individual.",
+    "- DOS FORMAS DEL MISMO PLATO: un plato suele venir como 'Segundo: X' (solo el plato, sin sopa) y como 'Completo X' (con sopa), con precios distintos. Trata 'segundo' o 'sencillo' = sin sopa; 'completo', 'combo' o 'con sopa' = con sopa, y elige esa forma. Interpreta la frase completa, no solo el nombre suelto. Si piden solo el nombre sin aclarar cuál (ej. 'un seco de pollo') y existen ambas formas hoy, pregunta en una frase: '¿el segundo ($X) o el completo con sopa ($Y)?' antes de registrar.",
     "- ADICIONALES (huevo extra, tortilla de verde, porción…): están SIEMPRE disponibles aunque no estén en el menú de hoy; búscalos en la lista 'Adicionales'. Las BEBIDAS/PRODUCTOS (cola, agua) están en su lista. Todos pueden ir en una venta normal, a crédito o en una mesa.",
     "- DESAMBIGUA cuando el pedido sea vago: ej. 'una tortilla de verde y un café' puede ser DOS adicionales por separado, PERO también puede existir un COMBO ('Tortilla de verde + café' o '… + huevo frito'). Mira si hay un combo que calce. Si lo hay y no está claro cuál quieren, NO asumas: pregunta en una frase '¿el combo Tortilla+café ($X) o la tortilla y el café por separado?' y solo registra cuando confirmen.",
     "- VENTA AL CONTADO (efectivo) → registrar_venta.",
@@ -222,9 +223,9 @@ export async function POST(req: Request) {
 
     if (actions.length) {
       const lista = actions
-        .map((a, i) => (actions.length > 1 ? `${i + 1}. ${a.preview}` : a.preview))
-        .join("\n");
-      const reply = [lista, ...notas].filter(Boolean).join("\n");
+        .map((a, i) => (actions.length > 1 ? `${i + 1})  ${a.preview}` : a.preview))
+        .join("\n\n");
+      const reply = [lista, ...notas].filter(Boolean).join("\n\n");
       return NextResponse.json({ transcript: userText, reply, actions });
     }
     return NextResponse.json({
