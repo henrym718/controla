@@ -2184,6 +2184,10 @@ export type Database = {
         }
         Returns: Json
       }
+      cocina_insumos_consumibles: {
+        Args: { p_date: string; p_restaurant: string; p_session: string }
+        Returns: Json
+      }
       consumir_insumo: {
         Args: {
           p_date: string
@@ -2197,6 +2201,16 @@ export type Database = {
       }
       conteo_estado: {
         Args: { p_date: string; p_restaurant: string }
+        Returns: Json
+      }
+      corregir_consumo: {
+        Args: {
+          p_date: string
+          p_items: Json
+          p_restaurant: string
+          p_session: string
+          p_user: string
+        }
         Returns: Json
       }
       crear_combo: {

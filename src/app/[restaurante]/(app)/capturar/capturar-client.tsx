@@ -21,9 +21,18 @@ type Status = "idle" | "recording" | "processing";
 export default function CapturarClient({
   slug,
   shiftName,
+  agentUrl = "/api/agent",
+  commitUrl = "/api/commit",
+  titulo = "Registrar venta",
 }: {
   slug: string;
   shiftName: string;
+  /** Endpoint del agente (ventas o consumo de cocina). */
+  agentUrl?: string;
+  /** Endpoint que ejecuta las acciones confirmadas. */
+  commitUrl?: string;
+  /** Etiqueta de la pantalla (ej. "Consumo de cocina"). */
+  titulo?: string;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<Status>("idle");
@@ -46,7 +55,7 @@ export default function CapturarClient({
     setStatus("processing");
     setReply("");
     try {
-      const res = await fetch("/api/agent", {
+      const res = await fetch(agentUrl, {
         method: "POST",
         headers: isForm ? undefined : { "content-type": "application/json" },
         body,
@@ -110,7 +119,7 @@ export default function CapturarClient({
     if (pending.length === 0) return;
     setStatus("processing");
     try {
-      const res = await fetch("/api/commit", {
+      const res = await fetch(commitUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ actions: pending }),
@@ -142,7 +151,8 @@ export default function CapturarClient({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gradient-to-b from-[#14121a] via-[#0a0a0a] to-[#1a0f14] text-white">
-      <div className="flex justify-end p-5">
+      <div className="flex items-center justify-between p-5">
+        <span className="text-sm font-semibold text-white/50">{titulo}</span>
         <button
           onClick={() => router.push(`/${slug}/hoy`)}
           className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold"

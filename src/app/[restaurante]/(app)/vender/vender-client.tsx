@@ -38,6 +38,8 @@ interface CuentaResumen {
   label: string;
   total: number;
   count: number;
+  /** Productos acumulados (cantidad × nombre), sin precio individual. */
+  items: { key: string; name: string; qty: number }[];
 }
 interface CuentaActiva {
   id: string;
@@ -456,11 +458,22 @@ export default function VenderClient({
             {cuentasAbiertas.map((c) => (
               <div key={c.id} className="rounded-2xl border border-ink/10 bg-white p-3">
                 <div className="flex items-center justify-between">
-                  <p className="font-bold">{c.label}</p>
-                  <p className="font-bold tabular-nums">{money(c.total)}</p>
+                  <p className="text-lg font-bold">{c.label}</p>
+                  <p className="text-lg font-bold tabular-nums">{money(c.total)}</p>
                 </div>
-                <p className="text-xs opacity-50">{c.count} ítem{c.count === 1 ? "" : "s"}</p>
-                <div className="mt-2 grid grid-cols-3 gap-2">
+                {/* Detalle de lo que se está cobrando, con letras grandes y sin
+                    precio por ítem: "2 × Bandeja". Para confirmar de un vistazo. */}
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {c.items.map((it) => (
+                    <li key={it.key} className="flex items-baseline gap-2.5 leading-snug">
+                      <span className="min-w-8 shrink-0 rounded-lg bg-coral/10 px-1.5 py-0.5 text-center text-lg font-extrabold tabular-nums text-coral">
+                        {it.qty}
+                      </span>
+                      <span className="text-lg font-bold">{it.name}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-3 grid grid-cols-3 gap-2">
                   <Link
                     href={`/${slug}/vender?cuenta=${c.id}`}
                     onClick={() => setCuentasOpen(false)}
